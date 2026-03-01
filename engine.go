@@ -51,6 +51,7 @@ func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return &Engine{
 		cfg:       cfg,
 		broker:    broker,
