@@ -21,7 +21,7 @@ A high-performance background job processor for Go. Uses a broker abstraction (R
 ## Installation
 
 ```bash
-go get github.com/quest/crank
+go get github.com/ogwurujohnson/crank
 ```
 
 ## Architecture
@@ -29,8 +29,9 @@ go get github.com/quest/crank
 The codebase is organized around a **broker-based** design with a single public package and internal layout:
 
 ```
-github.com/quest/crank/
+github.com/ogwurujohnson/crank/
 ├── crank.go                # Public API (re-exports)
+├── engine.go               # Engine (processor + worker registry)
 ├── cmd/crank/              # Optional: standalone worker binary
 ├── internal/
 │   ├── broker/             # Broker interface + Redis implementation
@@ -66,7 +67,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/quest/crank"
+	"github.com/ogwurujohnson/crank"
 )
 
 type EmailWorker struct{}
@@ -182,13 +183,15 @@ jid, err := crank.EnqueueWithOptions("EmailWorker", "critical", &crank.JobOption
 ```go
 import (
 	"github.com/gorilla/mux"
-	"github.com/quest/crank/web"
+	"github.com/ogwurujohnson/crank/web"
 )
 
 router := mux.NewRouter()
 web.Mount(router, "/crank", redis) // redis implements crank.Broker
-// Visit http://localhost:8080/crank for stats and queue management
+// Visit http://localhost:8080/crank for stats, queues, retries, dead jobs, and queue management
 ```
+
+**Production:** The clear-queue endpoint is destructive. Protect the Crank UI (e.g. with auth middleware or CSRF) or expose it only on trusted networks.
 
 ### Run the engine inside your app
 
@@ -263,6 +266,7 @@ Implement these methods (job types use `*crank.Job`):
 | `GetRetryJobs(limit int64) ([]*Job, error)` | Return jobs whose retry time has passed |
 | `RemoveFromRetry(job *Job) error` | Remove job from retry set (before re-enqueue) |
 | `AddToDead(job *Job) error` | Move job to dead set after max retries |
+| `GetDeadJobs(limit int64) ([]*Job, error)` | Return jobs from the dead set (for UI/inspection) |
 | `GetQueueSize(queue string) (int64, error)` | Queue length for stats/UI |
 | `DeleteKey(key string) error` | Delete a key (e.g. for queue clear; key format is `queue:{name}` for the default) |
 | `GetStats() (map[string]interface{}, error)` | Return `processed`, `retry`, `dead` (int64), and `queues` (map[string]int64) |
@@ -280,6 +284,7 @@ func (b *MyBroker) AddToRetry(job *crank.Job, retryAt time.Time) error { /* ... 
 func (b *MyBroker) GetRetryJobs(limit int64) ([]*crank.Job, error) { /* ... */ }
 func (b *MyBroker) RemoveFromRetry(job *crank.Job) error { /* ... */ }
 func (b *MyBroker) AddToDead(job *crank.Job) error { /* ... */ }
+func (b *MyBroker) GetDeadJobs(limit int64) ([]*crank.Job, error) { /* ... */ }
 func (b *MyBroker) GetQueueSize(queue string) (int64, error) { /* ... */ }
 func (b *MyBroker) DeleteKey(key string) error { /* ... */ }
 func (b *MyBroker) GetStats() (map[string]interface{}, error) { /* ... */ }

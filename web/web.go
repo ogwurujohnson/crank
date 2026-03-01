@@ -9,22 +9,19 @@ import (
 	"github.com/ogwurujohnson/crank"
 )
 
-var (
-	broker crank.Broker
-)
-
-// Mount mounts the Crank web UI on the given router
+// Mount mounts the Crank web UI on the given router. The broker b is passed into
+// all handlers via closure so multiple Mount calls use the correct broker.
 func Mount(router *mux.Router, path string, b crank.Broker) {
-	broker = b
 	subrouter := router.PathPrefix(path).Subrouter()
 
 	subrouter.HandleFunc("", indexHandler).Methods("GET")
 	subrouter.HandleFunc("/", indexHandler).Methods("GET")
-	subrouter.HandleFunc("/stats", statsHandler).Methods("GET")
-	subrouter.HandleFunc("/queues", queuesHandler).Methods("GET")
-	subrouter.HandleFunc("/queues/{queue}/clear", clearQueueHandler).Methods("POST")
-	subrouter.HandleFunc("/retries", retriesHandler).Methods("GET")
-	subrouter.HandleFunc("/dead", deadHandler).Methods("GET")
+	subrouter.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) { statsHandler(w, r, b) }).Methods("GET")
+	subrouter.HandleFunc("/queues", func(w http.ResponseWriter, r *http.Request) { queuesHandler(w, r, b) }).Methods("GET")
+	//todo: Clear-queue is destructive; protect with auth/CSRF in production (e.g. middleware).
+	subrouter.HandleFunc("/queues/{queue}/clear", func(w http.ResponseWriter, r *http.Request) { clearQueueHandler(w, r, b) }).Methods("POST")
+	subrouter.HandleFunc("/retries", func(w http.ResponseWriter, r *http.Request) { retriesHandler(w, r, b) }).Methods("GET")
+	subrouter.HandleFunc("/dead", func(w http.ResponseWriter, r *http.Request) { deadHandler(w, r, b) }).Methods("GET")
 
 	// Serve static assets
 	subrouter.PathPrefix("/static/").Handler(http.StripPrefix(path+"/static/", http.FileServer(http.Dir("web/static/"))))
@@ -104,7 +101,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(tmpl))
 }
 
-func statsHandler(w http.ResponseWriter, r *http.Request) {
+func statsHandler(w http.ResponseWriter, _r *http.Request, broker crank.Broker) {
 	stats, err := crank.GetStats(broker)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -115,7 +112,7 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(stats)
 }
 
-func queuesHandler(w http.ResponseWriter, r *http.Request) {
+func queuesHandler(w http.ResponseWriter, _r *http.Request, broker crank.Broker) {
 	stats, err := crank.GetStats(broker)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -126,7 +123,7 @@ func queuesHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(stats.Queues)
 }
 
-func clearQueueHandler(w http.ResponseWriter, r *http.Request) {
+func clearQueueHandler(w http.ResponseWriter, r *http.Request, broker crank.Broker) {
 	vars := mux.Vars(r)
 	queueName := vars["queue"]
 
@@ -140,14 +137,22 @@ func clearQueueHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Queue %s cleared", queueName)
 }
 
-func retriesHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement retry job listing
+func retriesHandler(w http.ResponseWriter, r *http.Request, broker crank.Broker) {
+	jobs, err := broker.GetRetryJobs(100)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"count": 0, "jobs": []interface{}{}})
+	json.NewEncoder(w).Encode(map[string]interface{}{"count": len(jobs), "jobs": jobs})
 }
 
-func deadHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement dead job listing
+func deadHandler(w http.ResponseWriter, r *http.Request, broker crank.Broker) {
+	jobs, err := broker.GetDeadJobs(100)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"count": 0, "jobs": []interface{}{}})
+	json.NewEncoder(w).Encode(map[string]interface{}{"count": len(jobs), "jobs": jobs})
 }
