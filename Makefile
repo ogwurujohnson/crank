@@ -1,8 +1,9 @@
-.PHONY: build run test clean deps examples
+.PHONY: build run test clean deps examples examples-web fmt lint
 
 # Build the Sidekiq CLI
 build:
-	go build -o bin/sidekiq cmd/sidekiq/main.go
+	mkdir -p bin
+	go build -o bin/sidekiq ./cmd/sidekiq/
 
 # Run the Sidekiq worker
 run: build
@@ -22,6 +23,12 @@ examples:
 	@echo "Running simple worker example..."
 	@echo "Make sure Redis is running on localhost:6379"
 	go run ./examples/simple_worker/
+
+examples-web:
+	@echo "Running web server example..."
+	@echo "Sidekiq UI will be at http://localhost:8080/sidekiq"
+	@echo "Make sure Redis is running on localhost:6379"
+	go run ./examples/web_server/
 
 # Clean build artifacts
 clean:
