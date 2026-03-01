@@ -17,6 +17,8 @@ var (
 )
 
 // RegisterWorker registers a worker class
+// className is the name of the worker class, e.g. "EmailWorker"
+// should be renamed to interfaceName for clarity.
 func RegisterWorker(className string, worker Worker) {
 	workersLock.Lock()
 	defer workersLock.Unlock()
