@@ -21,7 +21,7 @@ test:
 examples:
 	@echo "Running simple worker example..."
 	@echo "Make sure Redis is running on localhost:6379"
-	go run examples/simple_worker.go
+	go run ./examples/simple_worker/
 
 # Clean build artifacts
 clean:

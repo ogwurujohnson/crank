@@ -1,11 +1,14 @@
-package sidekiq
+package queue
 
 import (
 	"context"
+	"log"
+
+	"github.com/quest/sidekiq-go/internal/payload"
 )
 
 // MiddlewareFunc defines a middleware function
-type MiddlewareFunc func(ctx context.Context, job *Job, next func() error) error
+type MiddlewareFunc func(ctx context.Context, job *payload.Job, next func() error) error
 
 // MiddlewareChain manages middleware execution
 type MiddlewareChain struct {
@@ -25,7 +28,7 @@ func (mc *MiddlewareChain) Add(middleware MiddlewareFunc) {
 }
 
 // Execute executes the middleware chain
-func (mc *MiddlewareChain) Execute(ctx context.Context, job *Job, final func() error) error {
+func (mc *MiddlewareChain) Execute(ctx context.Context, job *payload.Job, final func() error) error {
 	if len(mc.middlewares) == 0 {
 		return final()
 	}
@@ -44,9 +47,7 @@ func (mc *MiddlewareChain) Execute(ctx context.Context, job *Job, final func() e
 	return next()
 }
 
-var (
-	globalMiddlewareChain = NewMiddlewareChain()
-)
+var globalMiddlewareChain = NewMiddlewareChain()
 
 // AddMiddleware adds middleware to the global chain
 func AddMiddleware(middleware MiddlewareFunc) {
@@ -58,3 +59,13 @@ func GetMiddlewareChain() *MiddlewareChain {
 	return globalMiddlewareChain
 }
 
+// LoggingMiddleware logs job execution with redacted args on failure
+func LoggingMiddleware(ctx context.Context, job *payload.Job, next func() error) error {
+	err := next()
+	if err != nil {
+		r := payload.GetDefaultRedactor()
+		safeArgs := r.RedactArgs(job.Args)
+		log.Printf("Job %s failed (args: %s): %v", job.JID, safeArgs, err)
+	}
+	return err
+}
