@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/quest/sidekiq-go/internal/payload"
+	"github.com/quest/crank/internal/payload"
 )
 
 // MiddlewareFunc defines a middleware function

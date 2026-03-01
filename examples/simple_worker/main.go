@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/quest/sidekiq-go"
+	"github.com/quest/crank"
 )
 
 // EmailWorker sends emails
@@ -49,36 +49,36 @@ func (w *ReportWorker) Perform(ctx context.Context, args ...interface{}) error {
 
 func main() {
 	// Connect to Redis
-	redis, err := sidekiq.NewRedisClient("redis://localhost:6379/0", 5*time.Second)
+	redis, err := crank.NewRedisClient("redis://localhost:6379/0", 5*time.Second)
 	if err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
 	defer redis.Close()
 
 	// Initialize client
-	client := sidekiq.NewClient(redis)
-	sidekiq.SetGlobalClient(client)
+	client := crank.NewClient(redis)
+	crank.SetGlobalClient(client)
 
 	// Register workers
-	sidekiq.RegisterWorker("EmailWorker", &EmailWorker{})
-	sidekiq.RegisterWorker("ReportWorker", &ReportWorker{})
+	crank.RegisterWorker("EmailWorker", &EmailWorker{})
+	crank.RegisterWorker("ReportWorker", &ReportWorker{})
 
 	// Enqueue some jobs
 	fmt.Println("Enqueueing jobs...")
 
-	jid1, err := sidekiq.Enqueue("EmailWorker", "default", 123)
+	jid1, err := crank.Enqueue("EmailWorker", "default", 123)
 	if err != nil {
 		log.Fatalf("Failed to enqueue job: %v", err)
 	}
 	fmt.Printf("Enqueued EmailWorker job: %s\n", jid1)
 
-	jid2, err := sidekiq.Enqueue("ReportWorker", "low", 456)
+	jid2, err := crank.Enqueue("ReportWorker", "low", 456)
 	if err != nil {
 		log.Fatalf("Failed to enqueue job: %v", err)
 	}
 	fmt.Printf("Enqueued ReportWorker job: %s\n", jid2)
 
-	jid3, err := sidekiq.EnqueueWithOptions("EmailWorker", "critical", &sidekiq.JobOptions{
+	jid3, err := crank.EnqueueWithOptions("EmailWorker", "critical", &crank.JobOptions{
 		Retry:     intPtr(3),
 		Backtrace: boolPtr(true),
 	}, 789)
@@ -88,7 +88,7 @@ func main() {
 	fmt.Printf("Enqueued EmailWorker job with options: %s\n", jid3)
 
 	fmt.Println("\nJobs enqueued. Start the worker process to process them:")
-	fmt.Println("  go run cmd/sidekiq/main.go -C config/sidekiq.yml")
+	fmt.Println("  go run ./cmd/crank/ -C config/crank.yml")
 }
 
 func intPtr(i int) *int {
@@ -98,4 +98,3 @@ func intPtr(i int) *int {
 func boolPtr(b bool) *bool {
 	return &b
 }
-

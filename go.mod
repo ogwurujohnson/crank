@@ -1,4 +1,4 @@
-module github.com/quest/sidekiq-go
+module github.com/quest/crank
 
 go 1.21
 

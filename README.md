@@ -1,6 +1,6 @@
-# Sidekiq-Go
+# Crank
 
-A high-performance background job processor for Go, inspired by [Sidekiq](https://github.com/sidekiq/sidekiq). Uses a broker abstraction (Redis by default), a managed worker pool, and goroutines for concurrent job processing.
+A high-performance background job processor for Go. Uses a broker abstraction (Redis by default), a managed worker pool, and goroutines for concurrent job processing.
 
 ## Features
 
@@ -21,7 +21,7 @@ A high-performance background job processor for Go, inspired by [Sidekiq](https:
 ## Installation
 
 ```bash
-go get github.com/quest/sidekiq-go
+go get github.com/quest/crank
 ```
 
 ## Architecture
@@ -29,9 +29,9 @@ go get github.com/quest/sidekiq-go
 The codebase is organized around a **broker-based** design with a single public package and internal layout:
 
 ```
-github.com/quest/sidekiq-go/
-├── sidekiq.go              # Public API (re-exports)
-├── cmd/sidekiq/            # Optional: standalone worker binary
+github.com/quest/crank/
+├── crank.go                # Public API (re-exports)
+├── cmd/crank/              # Optional: standalone worker binary
 ├── internal/
 │   ├── broker/             # Broker interface + Redis implementation
 │   ├── config/             # YAML config, queue weights, Redis/TLS options
@@ -43,7 +43,7 @@ github.com/quest/sidekiq-go/
 
 - **Producer**: Your app (or `examples/simple_worker`, `examples/web_server`) uses the **Client** to enqueue jobs; the client talks to the **Broker** (e.g. Redis).
 - **Broker**: Interface for Enqueue, Dequeue, Ack, retry/dead sets, and stats. Default implementation is **Redis** (`NewRedisClient` / `NewRedisClientWithConfig`).
-- **Consumer**: The **Processor** (worker pool manager) pulls jobs from the broker, runs payload validation and middleware, dispatches to registered **Worker** implementations, and handles retries and dead jobs. Run it via `cmd/sidekiq` or by starting the processor inside your own binary.
+- **Consumer**: The **Processor** (worker pool manager) pulls jobs from the broker, runs payload validation and middleware, dispatches to registered **Worker** implementations, and handles retries and dead jobs. Run it via `cmd/crank` or by starting the processor inside your own binary.
 
 Data flow:
 
@@ -66,7 +66,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/quest/sidekiq-go"
+	"github.com/quest/crank"
 )
 
 type EmailWorker struct{}
@@ -85,17 +85,17 @@ func (w *EmailWorker) Perform(ctx context.Context, args ...interface{}) error {
 }
 
 func main() {
-	redis, err := sidekiq.NewRedisClient("redis://localhost:6379/0", 5*time.Second)
+	redis, err := crank.NewRedisClient("redis://localhost:6379/0", 5*time.Second)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer redis.Close()
 
-	client := sidekiq.NewClient(redis)
-	sidekiq.SetGlobalClient(client)
-	sidekiq.RegisterWorker("EmailWorker", &EmailWorker{})
+	client := crank.NewClient(redis)
+	crank.SetGlobalClient(client)
+	crank.RegisterWorker("EmailWorker", &EmailWorker{})
 
-	jid, err := sidekiq.Enqueue("EmailWorker", "default", 123)
+	jid, err := crank.Enqueue("EmailWorker", "default", 123)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -109,24 +109,24 @@ Use the standalone worker (loads config and starts the Processor):
 
 ```bash
 # Ensure Redis is running, then:
-go run ./cmd/sidekiq/ -C config/sidekiq.yml
+go run ./cmd/crank/ -C config/crank.yml
 ```
 
 Or build and run:
 
 ```bash
 make build
-./bin/sidekiq -C config/sidekiq.yml
+./bin/crank -C config/crank.yml
 ```
 
 ### 3. Configuration
 
-The library does **not** read any config file automatically. You create a `*sidekiq.Config` by either:
+The library does **not** read any config file automatically. You create a `*crank.Config` by either:
 
-- **`sidekiq.LoadConfig(path)`** — load from a YAML file (any path you choose)
-- **Build it in code** — construct `sidekiq.Config` manually and pass it to `NewProcessor`
+- **`crank.LoadConfig(path)`** — load from a YAML file (any path you choose)
+- **Build it in code** — construct `crank.Config` manually and pass it to `NewProcessor`
 
-You do **not** need to provide `config/sidekiq.yml` in your project. That path is just the default used by `cmd/sidekiq` when you run `./bin/sidekiq -C config/sidekiq.yml`. You can use another path, another config format, or no file at all.
+You do **not** need to provide `config/crank.yml` in your project. That path is just the default used by `cmd/crank` when you run `./bin/crank -C config/crank.yml`. You can use another path, another config format, or no file at all.
 
 Example YAML format (for use with `LoadConfig`):
 
@@ -153,17 +153,17 @@ redis:
 **Config without a file:**
 
 ```go
-config := &sidekiq.Config{
+config := &crank.Config{
 	Concurrency: 10,
 	Timeout:     8,
 	Verbose:    true,
-	Queues:     []sidekiq.QueueConfig{{Name: "default", Weight: 1}},
-	Redis: sidekiq.RedisConfig{
+	Queues:     []crank.QueueConfig{{Name: "default", Weight: 1}},
+	Redis: crank.RedisConfig{
 		URL:             os.Getenv("REDIS_URL"),
 		NetworkTimeout:  5,
 	},
 }
-processor, _ := sidekiq.NewProcessor(config, broker)
+processor, _ := crank.NewProcessor(config, broker)
 ```
 
 ## Example usage
@@ -171,7 +171,7 @@ processor, _ := sidekiq.NewProcessor(config, broker)
 ### Enqueue with options
 
 ```go
-jid, err := sidekiq.EnqueueWithOptions("EmailWorker", "critical", &sidekiq.JobOptions{
+jid, err := crank.EnqueueWithOptions("EmailWorker", "critical", &crank.JobOptions{
 	Retry:     intPtr(3),
 	Backtrace: boolPtr(true),
 }, 789)
@@ -182,22 +182,22 @@ jid, err := sidekiq.EnqueueWithOptions("EmailWorker", "critical", &sidekiq.JobOp
 ```go
 import (
 	"github.com/gorilla/mux"
-	"github.com/quest/sidekiq-go/web"
+	"github.com/quest/crank-go/web"
 )
 
 router := mux.NewRouter()
-web.Mount(router, "/sidekiq", redis) // redis implements sidekiq.Broker
-// Visit http://localhost:8080/sidekiq for stats and queue management
+web.Mount(router, "/crank", redis) // redis implements crank.Broker
+// Visit http://localhost:8080/crank for stats and queue management
 ```
 
 ### Run processor inside your app
 
 ```go
-config, _ := sidekiq.LoadConfig("config/sidekiq.yml")
-broker, _ := sidekiq.NewRedisClient(config.Redis.URL, config.Redis.GetNetworkTimeout())
+config, _ := crank.LoadConfig("config/crank.yml")
+broker, _ := crank.NewRedisClient(config.Redis.URL, config.Redis.GetNetworkTimeout())
 defer broker.Close()
 
-processor, _ := sidekiq.NewProcessor(config, broker)
+processor, _ := crank.NewProcessor(config, broker)
 processor.Start()
 defer processor.Stop()
 
@@ -207,10 +207,10 @@ defer processor.Stop()
 ### Middleware and logging with redaction
 
 ```go
-sidekiq.AddMiddleware(sidekiq.LoggingMiddleware) // logs failures with redacted args
+crank.AddMiddleware(crank.LoggingMiddleware) // logs failures with redacted args
 
 // Or custom middleware
-sidekiq.AddMiddleware(func(ctx context.Context, job *sidekiq.Job, next func() error) error {
+crank.AddMiddleware(func(ctx context.Context, job *crank.Job, next func() error) error {
 	start := time.Now()
 	err := next()
 	log.Printf("Job %s took %v", job.JID, time.Since(start))
@@ -222,31 +222,31 @@ sidekiq.AddMiddleware(func(ctx context.Context, job *sidekiq.Job, next func() er
 
 ```go
 // Validate job class and arg count (treat payload as untrusted)
-sidekiq.SetValidator(sidekiq.ChainValidator{
-	sidekiq.SafeClassPattern(),
-	sidekiq.MaxArgsCount(10),
+crank.SetValidator(crank.ChainValidator{
+	crank.SafeClassPattern(),
+	crank.MaxArgsCount(10),
 })
 
 // Redact sensitive args in logs (default is masking)
-sidekiq.SetRedactor(sidekiq.NewFieldMaskingRedactor([]string{"password", "token"}))
+crank.SetRedactor(crank.NewFieldMaskingRedactor([]string{"password", "token"}))
 ```
 
 ### Queue and stats
 
 ```go
-queue := sidekiq.NewQueue("default", broker)
+queue := crank.NewQueue("default", broker)
 size, _ := queue.Size()
 _ = queue.Clear()
 
-stats, _ := sidekiq.GetStats(broker)
+stats, _ := crank.GetStats(broker)
 fmt.Printf("Processed: %d, Retry: %d, Dead: %d\n", stats.Processed, stats.Retry, stats.Dead)
 ```
 
 ### Custom broker
 
-You can use your own backend by implementing the `sidekiq.Broker` interface. All entry points accept any `Broker`: `NewClient(broker)`, `NewProcessor(config, broker)`, `NewQueue(name, broker)`, `GetStats(broker)`, and `web.Mount(router, path, broker)`.
+You can use your own backend by implementing the `crank.Broker` interface. All entry points accept any `Broker`: `NewClient(broker)`, `NewProcessor(config, broker)`, `NewQueue(name, broker)`, `GetStats(broker)`, and `web.Mount(router, path, broker)`.
 
-Implement these methods (job types use `*sidekiq.Job`):
+Implement these methods (job types use `*crank.Job`):
 
 | Method | Purpose |
 |--------|--------|
@@ -267,13 +267,13 @@ Example: plugging a custom broker into the client and processor:
 ```go
 type MyBroker struct { /* your backend client */ }
 
-func (b *MyBroker) Enqueue(queue string, job *sidekiq.Job) error { /* ... */ }
-func (b *MyBroker) Dequeue(queues []string, timeout time.Duration) (*sidekiq.Job, string, error) { /* ... */ }
-func (b *MyBroker) Ack(job *sidekiq.Job) error { return nil }
-func (b *MyBroker) AddToRetry(job *sidekiq.Job, retryAt time.Time) error { /* ... */ }
-func (b *MyBroker) GetRetryJobs(limit int64) ([]*sidekiq.Job, error) { /* ... */ }
-func (b *MyBroker) RemoveFromRetry(job *sidekiq.Job) error { /* ... */ }
-func (b *MyBroker) AddToDead(job *sidekiq.Job) error { /* ... */ }
+func (b *MyBroker) Enqueue(queue string, job *crank.Job) error { /* ... */ }
+func (b *MyBroker) Dequeue(queues []string, timeout time.Duration) (*crank.Job, string, error) { /* ... */ }
+func (b *MyBroker) Ack(job *crank.Job) error { return nil }
+func (b *MyBroker) AddToRetry(job *crank.Job, retryAt time.Time) error { /* ... */ }
+func (b *MyBroker) GetRetryJobs(limit int64) ([]*crank.Job, error) { /* ... */ }
+func (b *MyBroker) RemoveFromRetry(job *crank.Job) error { /* ... */ }
+func (b *MyBroker) AddToDead(job *crank.Job) error { /* ... */ }
 func (b *MyBroker) GetQueueSize(queue string) (int64, error) { /* ... */ }
 func (b *MyBroker) DeleteKey(key string) error { /* ... */ }
 func (b *MyBroker) GetStats() (map[string]interface{}, error) { /* ... */ }
@@ -281,8 +281,8 @@ func (b *MyBroker) Close() error { return nil }
 
 // Use it like Redis
 broker := &MyBroker{}
-client := sidekiq.NewClient(broker)
-processor, _ := sidekiq.NewProcessor(config, broker)
+client := crank.NewClient(broker)
+processor, _ := crank.NewProcessor(config, broker)
 ```
 
 ## Examples in this repo
@@ -290,7 +290,7 @@ processor, _ := sidekiq.NewProcessor(config, broker)
 | Example | Description |
 |--------|-------------|
 | `examples/simple_worker/` | Enqueues jobs; run a worker process separately to consume them. |
-| `examples/web_server/` | HTTP server that enqueues jobs and mounts the Sidekiq Web UI. |
+| `examples/web_server/` | HTTP server that enqueues jobs and mounts the Crank Web UI. |
 
 Run the simple enqueue example (then start the worker in another terminal):
 
@@ -298,7 +298,7 @@ Run the simple enqueue example (then start the worker in another terminal):
 go run ./examples/simple_worker/
 ```
 
-Run the web example (UI at `/sidekiq`, enqueue via `POST /api/jobs?user_id=123`):
+Run the web example (UI at `/crank`, enqueue via `POST /api/jobs?user_id=123`):
 
 ```bash
 go run ./examples/web_server/
@@ -310,7 +310,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for systemd, Docker, Kubernetes, and producti
 
 ## Comparison with Sidekiq (Ruby)
 
-| Feature | Sidekiq (Ruby) | Sidekiq-Go |
+| Feature | Sidekiq (Ruby) | Crank |
 |--------|-----------------|------------|
 | Language | Ruby | Go |
 | Concurrency | Threads | Goroutines + worker pool |

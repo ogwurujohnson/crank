@@ -1,16 +1,16 @@
-// Package sidekiq provides a Sidekiq-compatible job queue for Go.
+// Package crank provides a background job queue for Go.
 // All public API is re-exported from internal packages.
-package sidekiq
+package crank
 
 import (
 	"regexp"
 	"time"
 
-	"github.com/quest/sidekiq-go/internal/broker"
-	"github.com/quest/sidekiq-go/internal/config"
-	"github.com/quest/sidekiq-go/internal/payload"
-	"github.com/quest/sidekiq-go/internal/queue"
-	"github.com/quest/sidekiq-go/pkg/sdk"
+	"github.com/quest/crank/internal/broker"
+	"github.com/quest/crank/internal/config"
+	"github.com/quest/crank/internal/payload"
+	"github.com/quest/crank/internal/queue"
+	"github.com/quest/crank/pkg/sdk"
 )
 
 // ----- broker -----
@@ -88,10 +88,10 @@ type MiddlewareFunc = queue.MiddlewareFunc
 type MiddlewareChain = queue.MiddlewareChain
 
 var (
-	NewMiddlewareChain  = queue.NewMiddlewareChain
-	AddMiddleware       = queue.AddMiddleware
-	GetMiddlewareChain  = queue.GetMiddlewareChain
-	LoggingMiddleware   = queue.LoggingMiddleware
+	NewMiddlewareChain = queue.NewMiddlewareChain
+	AddMiddleware      = queue.AddMiddleware
+	GetMiddlewareChain = queue.GetMiddlewareChain
+	LoggingMiddleware  = queue.LoggingMiddleware
 )
 
 // ----- redactor -----
@@ -102,8 +102,8 @@ var (
 	MaskingRedactor = payload.MaskingRedactor{}
 )
 
-func SetRedactor(r payload.Redactor)   { payload.SetDefaultRedactor(r) }
-func GetRedactor() payload.Redactor   { return payload.GetDefaultRedactor() }
+func SetRedactor(r payload.Redactor) { payload.SetDefaultRedactor(r) }
+func GetRedactor() payload.Redactor { return payload.GetDefaultRedactor() }
 func NewFieldMaskingRedactor(keys []string) *payload.FieldMaskingRedactor {
 	return &payload.FieldMaskingRedactor{Keys: keys}
 }
@@ -119,8 +119,8 @@ var (
 	MaxPayloadSize = payload.MaxPayloadSize
 )
 
-func SetValidator(v payload.Validator) { payload.SetDefaultValidator(v) }
-func GetValidator() payload.Validator { return payload.GetDefaultValidator() }
+func SetValidator(v payload.Validator)  { payload.SetDefaultValidator(v) }
+func GetValidator() payload.Validator    { return payload.GetDefaultValidator() }
 
 func SafeClassPattern() payload.Validator {
 	return payload.ClassPattern(regexp.MustCompile(`^[A-Za-z0-9_]+$`))

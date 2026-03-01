@@ -6,18 +6,18 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
-	"github.com/quest/sidekiq-go"
+	"github.com/quest/crank"
 )
 
 var (
-	broker sidekiq.Broker
+	broker crank.Broker
 )
 
-// Mount mounts the Sidekiq web UI on the given router
-func Mount(router *mux.Router, path string, b sidekiq.Broker) {
+// Mount mounts the Crank web UI on the given router
+func Mount(router *mux.Router, path string, b crank.Broker) {
 	broker = b
 	subrouter := router.PathPrefix(path).Subrouter()
-	
+
 	subrouter.HandleFunc("", indexHandler).Methods("GET")
 	subrouter.HandleFunc("/", indexHandler).Methods("GET")
 	subrouter.HandleFunc("/stats", statsHandler).Methods("GET")
@@ -25,7 +25,7 @@ func Mount(router *mux.Router, path string, b sidekiq.Broker) {
 	subrouter.HandleFunc("/queues/{queue}/clear", clearQueueHandler).Methods("POST")
 	subrouter.HandleFunc("/retries", retriesHandler).Methods("GET")
 	subrouter.HandleFunc("/dead", deadHandler).Methods("GET")
-	
+
 	// Serve static assets
 	subrouter.PathPrefix("/static/").Handler(http.StripPrefix(path+"/static/", http.FileServer(http.Dir("web/static/"))))
 }
@@ -34,7 +34,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 	tmpl := `<!DOCTYPE html>
 <html>
 <head>
-	<title>Sidekiq</title>
+	<title>Crank</title>
 	<style>
 		body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
 		.container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 5px; }
@@ -52,14 +52,15 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 </head>
 <body>
 	<div class="container">
-		<h1>Sidekiq</h1>
+		<h1>Crank</h1>
 		<div id="stats"></div>
 		<h2>Queues</h2>
 		<div id="queues"></div>
 	</div>
 	<script>
+		var base = window.location.pathname.replace(/\/$/, '');
 		function loadStats() {
-			fetch('/sidekiq/stats')
+			fetch(base + '/stats')
 				.then(r => r.json())
 				.then(data => {
 					const html = '<div class="stats">' +
@@ -71,7 +72,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 				});
 		}
 		function loadQueues() {
-			fetch('/sidekiq/queues')
+			fetch(base + '/queues')
 				.then(r => r.json())
 				.then(data => {
 					let html = '<div class="queue-list">';
@@ -87,7 +88,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		function clearQueue(name) {
 			if (confirm('Clear queue ' + name + '?')) {
-				fetch('/sidekiq/queues/' + name + '/clear', {method: 'POST'})
+				fetch(base + '/queues/' + name + '/clear', {method: 'POST'})
 					.then(() => loadQueues());
 			}
 		}
@@ -98,13 +99,13 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 	</script>
 </body>
 </html>`
-	
+
 	w.Header().Set("Content-Type", "text/html")
 	w.Write([]byte(tmpl))
 }
 
 func statsHandler(w http.ResponseWriter, r *http.Request) {
-	stats, err := sidekiq.GetStats(broker)
+	stats, err := crank.GetStats(broker)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -115,7 +116,7 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func queuesHandler(w http.ResponseWriter, r *http.Request) {
-	stats, err := sidekiq.GetStats(broker)
+	stats, err := crank.GetStats(broker)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -129,7 +130,7 @@ func clearQueueHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	queueName := vars["queue"]
 
-	queue := sidekiq.NewQueue(queueName, broker)
+	queue := crank.NewQueue(queueName, broker)
 	if err := queue.Clear(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -150,4 +151,3 @@ func deadHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"count": 0, "jobs": []interface{}{}})
 }
-

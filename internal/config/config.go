@@ -8,7 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents Sidekiq configuration
+// Config represents Crank configuration
 type Config struct {
 	Concurrency int           `yaml:"concurrency"`
 	Queues      []QueueConfig  `yaml:"queues"`

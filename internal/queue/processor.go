@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/quest/sidekiq-go/internal/broker"
-	"github.com/quest/sidekiq-go/internal/config"
-	"github.com/quest/sidekiq-go/internal/payload"
+	"github.com/quest/crank/internal/broker"
+	"github.com/quest/crank/internal/config"
+	"github.com/quest/crank/internal/payload"
 )
 
 // Processor manages job processing with a worker pool
@@ -57,7 +57,7 @@ func NewProcessor(cfg *config.Config, b broker.Broker) (*Processor, error) {
 // Start begins processing jobs
 func (p *Processor) Start() error {
 	if p.verbose {
-		log.Printf("Starting Sidekiq processor with concurrency=%d, queues=%v", p.cfg.Concurrency, p.queues)
+		log.Printf("Starting Crank processor with concurrency=%d, queues=%v", p.cfg.Concurrency, p.queues)
 	}
 
 	for i := 0; i < p.cfg.Concurrency; i++ {
@@ -74,7 +74,7 @@ func (p *Processor) Start() error {
 // Stop gracefully stops the processor
 func (p *Processor) Stop() {
 	if p.verbose {
-		log.Println("Stopping Sidekiq processor...")
+		log.Println("Stopping Crank processor...")
 	}
 
 	p.cancel()
@@ -82,7 +82,7 @@ func (p *Processor) Stop() {
 	p.wg.Wait()
 
 	if p.verbose {
-		log.Println("Sidekiq processor stopped")
+		log.Println("Crank processor stopped")
 	}
 }
 

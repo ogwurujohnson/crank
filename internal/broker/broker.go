@@ -3,7 +3,7 @@ package broker
 import (
 	"time"
 
-	"github.com/quest/sidekiq-go/internal/payload"
+	"github.com/quest/crank/internal/payload"
 )
 
 // Broker defines the storage abstraction for job queues.
