@@ -191,6 +191,23 @@ func (r *RedisBroker) AddToDead(job *payload.Job) error {
 	}).Err()
 }
 
+// GetDeadJobs returns up to limit jobs from the dead set (most recent first by score).
+func (r *RedisBroker) GetDeadJobs(limit int64) ([]*payload.Job, error) {
+	result, err := r.client.ZRevRange(r.ctx, "dead", 0, limit-1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dead jobs: %w", err)
+	}
+	jobs := make([]*payload.Job, 0, len(result))
+	for _, data := range result {
+		job, err := payload.FromJSON([]byte(data))
+		if err != nil {
+			continue
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
+}
+
 // GetQueueSize returns the size of a queue
 func (r *RedisBroker) GetQueueSize(queue string) (int64, error) {
 	return r.client.LLen(r.ctx, "queue:"+queue).Result()
@@ -201,7 +218,8 @@ func (r *RedisBroker) DeleteKey(key string) error {
 	return r.client.Del(r.ctx, key).Err()
 }
 
-// GetStats returns queue statistics
+// GetStats returns queue statistics. Queue names are discovered via KEYS queue:*
+// so all queues that have ever been used are included in the queues map.
 func (r *RedisBroker) GetStats() (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 
@@ -214,11 +232,18 @@ func (r *RedisBroker) GetStats() (map[string]interface{}, error) {
 	dead, _ := r.client.ZCard(r.ctx, "dead").Result()
 	stats["dead"] = dead
 
-	queues := []string{"critical", "default", "low"}
 	queueSizes := make(map[string]int64)
-	for _, q := range queues {
-		size, _ := r.GetQueueSize(q)
-		queueSizes[q] = size
+	keys, err := r.client.Keys(r.ctx, "queue:*").Result()
+	if err != nil {
+		stats["queues"] = queueSizes
+		return stats, nil
+	}
+	for _, key := range keys {
+		if len(key) > 6 {
+			name := key[6:]
+			size, _ := r.client.LLen(r.ctx, key).Result()
+			queueSizes[name] = size
+		}
 	}
 	stats["queues"] = queueSizes
 

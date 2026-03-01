@@ -1,6 +1,8 @@
 package queue
 
 import (
+	"fmt"
+
 	"github.com/ogwurujohnson/crank/internal/broker"
 )
 
@@ -41,19 +43,93 @@ type Stats struct {
 	Queues    map[string]int64 `json:"queues"`
 }
 
-// GetStats returns current statistics
+// getInt64 extracts int64 from broker stats map (handles int, int64, float64 from JSON).
+func getInt64(m map[string]interface{}, key string) (int64, error) {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return 0, fmt.Errorf("stats: missing or nil %q", key)
+	}
+	switch n := v.(type) {
+	case int64:
+		return n, nil
+	case int:
+		return int64(n), nil
+	case float64:
+		return int64(n), nil
+	default:
+		return 0, fmt.Errorf("stats: %q has invalid type %T", key, v)
+	}
+}
+
+// getQueuesMap extracts map[string]int64 from broker stats. Handles both
+// map[string]interface{} (e.g. from JSON) and map[string]int64 (from Redis broker).
+func getQueuesMap(m map[string]interface{}, key string) (map[string]int64, error) {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return nil, fmt.Errorf("stats: missing or nil %q", key)
+	}
+	// Direct map[string]int64 (e.g. Redis broker)
+	if q, ok := v.(map[string]int64); ok {
+		out := make(map[string]int64, len(q))
+		for k, n := range q {
+			out[k] = n
+		}
+		return out, nil
+	}
+	// map[string]interface{} (e.g. from JSON or custom broker)
+	raw, ok := v.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("stats: %q is not a map", key)
+	}
+	out := make(map[string]int64, len(raw))
+	for k, val := range raw {
+		if val == nil {
+			out[k] = 0
+			continue
+		}
+		switch n := val.(type) {
+		case int64:
+			out[k] = n
+		case int:
+			out[k] = int64(n)
+		case float64:
+			out[k] = int64(n)
+		default:
+			return nil, fmt.Errorf("stats: %q[%s] has invalid type %T", key, k, val)
+		}
+	}
+	return out, nil
+}
+
+// GetStats returns current statistics. Parses broker response safely; returns an error
+// if the broker returns missing or invalid types instead of panicking.
 func GetStats(b broker.Broker) (*Stats, error) {
 	statsMap, err := b.GetStats()
 	if err != nil {
 		return nil, err
 	}
 
-	stats := &Stats{
-		Processed: statsMap["processed"].(int64),
-		Retry:     statsMap["retry"].(int64),
-		Dead:      statsMap["dead"].(int64),
-		Queues:    statsMap["queues"].(map[string]int64),
+	processed, err := getInt64(statsMap, "processed")
+	if err != nil {
+		return nil, err
+	}
+	retry, err := getInt64(statsMap, "retry")
+	if err != nil {
+		return nil, err
+	}
+	dead, err := getInt64(statsMap, "dead")
+	if err != nil {
+		return nil, err
+	}
+	queues, err := getQueuesMap(statsMap, "queues")
+	if err != nil {
+		return nil, err
 	}
 
-	return stats, nil
+	return &Stats{
+		Processed: processed,
+		Retry:     retry,
+		Dead:      dead,
+		Queues:    queues,
+	}, nil
 }

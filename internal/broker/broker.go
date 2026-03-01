@@ -16,6 +16,7 @@ type Broker interface {
 	GetRetryJobs(limit int64) ([]*payload.Job, error)
 	RemoveFromRetry(job *payload.Job) error
 	AddToDead(job *payload.Job) error
+	GetDeadJobs(limit int64) ([]*payload.Job, error)
 	GetQueueSize(queue string) (int64, error)
 	DeleteKey(key string) error
 	GetStats() (map[string]interface{}, error)

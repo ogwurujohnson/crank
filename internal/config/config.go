@@ -17,8 +17,10 @@ type Config struct {
 	Redis       RedisConfig   `yaml:"redis"`
 }
 
-// QueueConfig represents queue priority configuration
-// Can be parsed as [name, weight] array or {name: name, weight: weight} map
+// QueueConfig represents queue configuration.
+// Can be parsed as [name, weight] array or {name: name, weight: weight} map.
+// Weight controls polling share (higher = more workers poll this queue). Priority is
+// parsed from YAML but not yet used by the processor (reserved for future ordering).
 type QueueConfig struct {
 	Name     string `yaml:"name"`
 	Weight   int    `yaml:"weight"`
