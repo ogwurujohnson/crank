@@ -1,0 +1,11 @@
+concurrency: 10
+queues:
+  - [critical, 5]
+  - [default, 3]
+  - [low, 1]
+timeout: 8
+verbose: true
+redis:
+  url: redis://localhost:6379/0
+  network_timeout: 5
+

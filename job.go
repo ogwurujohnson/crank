@@ -1,0 +1,72 @@
+package sidekiq
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// Job represents a background job
+type Job struct {
+	JID       string                 `json:"jid"`
+	Class     string                 `json:"class"`
+	Args      []interface{}          `json:"args"`
+	Queue     string                 `json:"queue"`
+	Retry     int                    `json:"retry"`
+	RetryCount int                   `json:"retry_count"`
+	CreatedAt float64                `json:"created_at"`
+	EnqueuedAt float64               `json:"enqueued_at"`
+	Backtrace bool                   `json:"backtrace"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// NewJob creates a new job instance
+func NewJob(workerClass string, queue string, args ...interface{}) *Job {
+	now := float64(time.Now().Unix())
+	return &Job{
+		JID:        uuid.New().String(),
+		Class:      workerClass,
+		Args:       args,
+		Queue:      queue,
+		Retry:      5, // default retry count
+		RetryCount: 0,
+		CreatedAt:  now,
+		EnqueuedAt: now,
+		Backtrace:  false,
+		Metadata:   make(map[string]interface{}),
+	}
+}
+
+// SetRetry sets the retry count
+func (j *Job) SetRetry(count int) *Job {
+	j.Retry = count
+	return j
+}
+
+// SetBacktrace enables backtrace collection
+func (j *Job) SetBacktrace(enabled bool) *Job {
+	j.Backtrace = enabled
+	return j
+}
+
+// ToJSON serializes the job to JSON
+func (j *Job) ToJSON() ([]byte, error) {
+	return json.Marshal(j)
+}
+
+// FromJSON deserializes a job from JSON
+func FromJSON(data []byte) (*Job, error) {
+	var job Job
+	if err := json.Unmarshal(data, &job); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal job: %w", err)
+	}
+	return &job, nil
+}
+
+// String returns a string representation of the job
+func (j *Job) String() string {
+	return fmt.Sprintf("Job{Class: %s, Queue: %s, JID: %s}", j.Class, j.Queue, j.JID)
+}
+
