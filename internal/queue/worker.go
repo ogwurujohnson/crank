@@ -11,9 +11,14 @@ type Worker interface {
 	Perform(ctx context.Context, args ...interface{}) error
 }
 
+// WorkerRegistry provides workers by class name. Used by Processor and by Engine.
+type WorkerRegistry interface {
+	GetWorker(className string) (Worker, error)
+}
+
 var (
 	workers     = make(map[string]Worker)
-	workersLock  sync.RWMutex
+	workersLock sync.RWMutex
 )
 
 // RegisterWorker registers a worker class

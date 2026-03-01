@@ -105,7 +105,7 @@ func main() {
 
 ### 2. Run the worker process (consumer)
 
-Use the standalone worker (loads config and starts the Processor):
+Use the standalone worker (loads config and starts the Engine):
 
 ```bash
 # Ensure Redis is running, then:
@@ -124,7 +124,7 @@ make build
 The library does **not** read any config file automatically. You create a `*crank.Config` by either:
 
 - **`crank.LoadConfig(path)`** — load from a YAML file (any path you choose)
-- **Build it in code** — construct `crank.Config` manually and pass it to `NewProcessor`
+- **Build it in code** — construct `crank.Config` manually and pass it to `NewEngine`
 
 You do **not** need to provide `config/crank.yml` in your project. That path is just the default used by `cmd/crank` when you run `./bin/crank -C config/crank.yml`. You can use another path, another config format, or no file at all.
 
@@ -163,7 +163,7 @@ config := &crank.Config{
 		NetworkTimeout:  5,
 	},
 }
-processor, _ := crank.NewProcessor(config, broker)
+engine, _ := crank.NewEngine(config, broker)
 ```
 
 ## Example usage
@@ -182,7 +182,7 @@ jid, err := crank.EnqueueWithOptions("EmailWorker", "critical", &crank.JobOption
 ```go
 import (
 	"github.com/gorilla/mux"
-	"github.com/quest/crank-go/web"
+	"github.com/quest/crank/web"
 )
 
 router := mux.NewRouter()
@@ -190,16 +190,22 @@ web.Mount(router, "/crank", redis) // redis implements crank.Broker
 // Visit http://localhost:8080/crank for stats and queue management
 ```
 
-### Run processor inside your app
+### Run the engine inside your app
 
 ```go
 config, _ := crank.LoadConfig("config/crank.yml")
 broker, _ := crank.NewRedisClient(config.Redis.URL, config.Redis.GetNetworkTimeout())
 defer broker.Close()
 
-processor, _ := crank.NewProcessor(config, broker)
-processor.Start()
-defer processor.Stop()
+engine, _ := crank.NewEngine(config, broker)
+engine.RegisterWorkers(map[string]crank.Worker{
+	"EmailWorker": &EmailWorker{},
+})
+// or engine.Register("EmailWorker", &EmailWorker{}) for a single worker
+if err := engine.Start(); err != nil {
+	panic(err)
+}
+defer engine.Stop()
 
 // Your HTTP server or other work here
 ```
@@ -244,7 +250,7 @@ fmt.Printf("Processed: %d, Retry: %d, Dead: %d\n", stats.Processed, stats.Retry,
 
 ### Custom broker
 
-You can use your own backend by implementing the `crank.Broker` interface. All entry points accept any `Broker`: `NewClient(broker)`, `NewProcessor(config, broker)`, `NewQueue(name, broker)`, `GetStats(broker)`, and `web.Mount(router, path, broker)`.
+You can use your own backend by implementing the `crank.Broker` interface. All entry points accept any `Broker`: `NewClient(broker)`, `NewEngine(config, broker)`, `NewQueue(name, broker)`, `GetStats(broker)`, and `web.Mount(router, path, broker)`.
 
 Implement these methods (job types use `*crank.Job`):
 
@@ -262,7 +268,7 @@ Implement these methods (job types use `*crank.Job`):
 | `GetStats() (map[string]interface{}, error)` | Return `processed`, `retry`, `dead` (int64), and `queues` (map[string]int64) |
 | `Close() error` | Release connections/resources |
 
-Example: plugging a custom broker into the client and processor:
+Example: plugging a custom broker into the client and engine:
 
 ```go
 type MyBroker struct { /* your backend client */ }
@@ -282,7 +288,7 @@ func (b *MyBroker) Close() error { return nil }
 // Use it like Redis
 broker := &MyBroker{}
 client := crank.NewClient(broker)
-processor, _ := crank.NewProcessor(config, broker)
+engine, _ := crank.NewEngine(config, broker)
 ```
 
 ## Examples in this repo

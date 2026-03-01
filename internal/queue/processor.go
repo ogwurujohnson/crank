@@ -16,6 +16,7 @@ import (
 type Processor struct {
 	cfg         *config.Config
 	broker      broker.Broker
+	registry    WorkerRegistry // if nil, uses global GetWorker
 	queues      []string
 	workers     chan struct{}
 	wg          sync.WaitGroup
@@ -25,8 +26,9 @@ type Processor struct {
 	verbose     bool
 }
 
-// NewProcessor creates a new processor instance
-func NewProcessor(cfg *config.Config, b broker.Broker) (*Processor, error) {
+// NewProcessor creates a new processor instance. If registry is nil, the global
+// worker registry (RegisterWorker/GetWorker) is used.
+func NewProcessor(cfg *config.Config, b broker.Broker, registry WorkerRegistry) (*Processor, error) {
 	queues := make([]string, 0)
 	for _, qc := range cfg.Queues {
 		for i := 0; i < qc.Weight; i++ {
@@ -43,6 +45,7 @@ func NewProcessor(cfg *config.Config, b broker.Broker) (*Processor, error) {
 	p := &Processor{
 		cfg:         cfg,
 		broker:      b,
+		registry:    registry,
 		queues:      queues,
 		workers:     make(chan struct{}, cfg.Concurrency),
 		ctx:         ctx,
@@ -135,7 +138,13 @@ func (p *Processor) processJob(job *payload.Job, queue string) {
 		}
 	}
 
-	worker, err := GetWorker(job.Class)
+	var worker Worker
+	var err error
+	if p.registry != nil {
+		worker, err = p.registry.GetWorker(job.Class)
+	} else {
+		worker, err = GetWorker(job.Class)
+	}
 	if err != nil {
 		log.Printf("Error getting worker '%s': %v", job.Class, err)
 		p.handleFailure(job, fmt.Errorf("worker not found: %w", err))

@@ -18,7 +18,7 @@ import (
 // Broker is the storage abstraction for job queues. The library uses it for
 // enqueue, dequeue, retries, and dead jobs. Implement this interface to use
 // a custom backend (e.g. PostgreSQL, NATS, or an in-memory store) instead of Redis.
-// All public APIs (NewClient, NewProcessor, NewQueue, GetStats, web.Mount) accept
+// All public APIs (NewClient, NewEngine, NewQueue, GetStats, web.Mount) accept
 // any Broker implementation.
 type Broker = broker.Broker
 
@@ -69,10 +69,15 @@ type (
 )
 
 var (
-	NewProcessor = queue.NewProcessor
-	NewQueue     = queue.NewQueue
-	GetStats     = queue.GetStats
+	NewQueue = queue.NewQueue
+	GetStats = queue.GetStats
 )
+
+// NewProcessor creates a processor using the global worker registry (RegisterWorker).
+// For per-engine registration, use NewEngine and engine.Register instead.
+func NewProcessor(cfg *Config, b Broker) (*Processor, error) {
+	return queue.NewProcessor(cfg, b, nil)
+}
 
 // ----- worker -----
 type Worker = queue.Worker
@@ -103,7 +108,7 @@ var (
 )
 
 func SetRedactor(r payload.Redactor) { payload.SetDefaultRedactor(r) }
-func GetRedactor() payload.Redactor { return payload.GetDefaultRedactor() }
+func GetRedactor() payload.Redactor  { return payload.GetDefaultRedactor() }
 func NewFieldMaskingRedactor(keys []string) *payload.FieldMaskingRedactor {
 	return &payload.FieldMaskingRedactor{Keys: keys}
 }
@@ -119,8 +124,8 @@ var (
 	MaxPayloadSize = payload.MaxPayloadSize
 )
 
-func SetValidator(v payload.Validator)  { payload.SetDefaultValidator(v) }
-func GetValidator() payload.Validator    { return payload.GetDefaultValidator() }
+func SetValidator(v payload.Validator) { payload.SetDefaultValidator(v) }
+func GetValidator() payload.Validator  { return payload.GetDefaultValidator() }
 
 func SafeClassPattern() payload.Validator {
 	return payload.ClassPattern(regexp.MustCompile(`^[A-Za-z0-9_]+$`))
