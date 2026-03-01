@@ -14,7 +14,15 @@ import (
 )
 
 // ----- broker -----
+
+// Broker is the storage abstraction for job queues. The library uses it for
+// enqueue, dequeue, retries, and dead jobs. Implement this interface to use
+// a custom backend (e.g. PostgreSQL, NATS, or an in-memory store) instead of Redis.
+// All public APIs (NewClient, NewProcessor, NewQueue, GetStats, web.Mount) accept
+// any Broker implementation.
 type Broker = broker.Broker
+
+// RedisClient is the built-in Redis implementation of Broker.
 type RedisClient = broker.RedisBroker
 type RedisBrokerConfig = broker.RedisBrokerConfig
 

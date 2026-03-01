@@ -121,7 +121,14 @@ make build
 
 ### 3. Configuration
 
-Example `config/sidekiq.yml`:
+The library does **not** read any config file automatically. You create a `*sidekiq.Config` by either:
+
+- **`sidekiq.LoadConfig(path)`** — load from a YAML file (any path you choose)
+- **Build it in code** — construct `sidekiq.Config` manually and pass it to `NewProcessor`
+
+You do **not** need to provide `config/sidekiq.yml` in your project. That path is just the default used by `cmd/sidekiq` when you run `./bin/sidekiq -C config/sidekiq.yml`. You can use another path, another config format, or no file at all.
+
+Example YAML format (for use with `LoadConfig`):
 
 ```yaml
 concurrency: 10
@@ -142,6 +149,22 @@ redis:
 - `queues`: Name and weight; higher weight = more polling share.
 - `timeout`: Job execution timeout in seconds.
 - `redis.url`: Overridable by `REDIS_URL`. Use `rediss://` or set `use_tls: true` for TLS.
+
+**Config without a file:**
+
+```go
+config := &sidekiq.Config{
+	Concurrency: 10,
+	Timeout:     8,
+	Verbose:    true,
+	Queues:     []sidekiq.QueueConfig{{Name: "default", Weight: 1}},
+	Redis: sidekiq.RedisConfig{
+		URL:             os.Getenv("REDIS_URL"),
+		NetworkTimeout:  5,
+	},
+}
+processor, _ := sidekiq.NewProcessor(config, broker)
+```
 
 ## Example usage
 
@@ -217,6 +240,49 @@ _ = queue.Clear()
 
 stats, _ := sidekiq.GetStats(broker)
 fmt.Printf("Processed: %d, Retry: %d, Dead: %d\n", stats.Processed, stats.Retry, stats.Dead)
+```
+
+### Custom broker
+
+You can use your own backend by implementing the `sidekiq.Broker` interface. All entry points accept any `Broker`: `NewClient(broker)`, `NewProcessor(config, broker)`, `NewQueue(name, broker)`, `GetStats(broker)`, and `web.Mount(router, path, broker)`.
+
+Implement these methods (job types use `*sidekiq.Job`):
+
+| Method | Purpose |
+|--------|--------|
+| `Enqueue(queue string, job *Job) error` | Push a job onto the named queue |
+| `Dequeue(queues []string, timeout time.Duration) (*Job, string, error)` | Block until a job is available from any of the queues; return job and queue name |
+| `Ack(job *Job) error` | Optional: acknowledge after process (Redis uses no-op; at-most-once brokers can use this) |
+| `AddToRetry(job *Job, retryAt time.Time) error` | Schedule job for retry at given time |
+| `GetRetryJobs(limit int64) ([]*Job, error)` | Return jobs whose retry time has passed |
+| `RemoveFromRetry(job *Job) error` | Remove job from retry set (before re-enqueue) |
+| `AddToDead(job *Job) error` | Move job to dead set after max retries |
+| `GetQueueSize(queue string) (int64, error)` | Queue length for stats/UI |
+| `DeleteKey(key string) error` | Delete a key (e.g. for queue clear; key format is `queue:{name}` for the default) |
+| `GetStats() (map[string]interface{}, error)` | Return `processed`, `retry`, `dead` (int64), and `queues` (map[string]int64) |
+| `Close() error` | Release connections/resources |
+
+Example: plugging a custom broker into the client and processor:
+
+```go
+type MyBroker struct { /* your backend client */ }
+
+func (b *MyBroker) Enqueue(queue string, job *sidekiq.Job) error { /* ... */ }
+func (b *MyBroker) Dequeue(queues []string, timeout time.Duration) (*sidekiq.Job, string, error) { /* ... */ }
+func (b *MyBroker) Ack(job *sidekiq.Job) error { return nil }
+func (b *MyBroker) AddToRetry(job *sidekiq.Job, retryAt time.Time) error { /* ... */ }
+func (b *MyBroker) GetRetryJobs(limit int64) ([]*sidekiq.Job, error) { /* ... */ }
+func (b *MyBroker) RemoveFromRetry(job *sidekiq.Job) error { /* ... */ }
+func (b *MyBroker) AddToDead(job *sidekiq.Job) error { /* ... */ }
+func (b *MyBroker) GetQueueSize(queue string) (int64, error) { /* ... */ }
+func (b *MyBroker) DeleteKey(key string) error { /* ... */ }
+func (b *MyBroker) GetStats() (map[string]interface{}, error) { /* ... */ }
+func (b *MyBroker) Close() error { return nil }
+
+// Use it like Redis
+broker := &MyBroker{}
+client := sidekiq.NewClient(broker)
+processor, _ := sidekiq.NewProcessor(config, broker)
 ```
 
 ## Examples in this repo
