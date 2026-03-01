@@ -1,26 +1,26 @@
-package sidekiq
+package queue
 
 import (
-	"fmt"
+	"github.com/quest/sidekiq-go/internal/broker"
 )
 
 // Queue represents a job queue
 type Queue struct {
-	name  string
-	redis *RedisClient
+	name   string
+	broker broker.Broker
 }
 
 // NewQueue creates a new queue instance
-func NewQueue(name string, redis *RedisClient) *Queue {
+func NewQueue(name string, b broker.Broker) *Queue {
 	return &Queue{
-		name:  name,
-		redis: redis,
+		name:   name,
+		broker: b,
 	}
 }
 
 // Size returns the current size of the queue
 func (q *Queue) Size() (int64, error) {
-	return q.redis.GetQueueSize(q.name)
+	return q.broker.GetQueueSize(q.name)
 }
 
 // Name returns the queue name
@@ -30,8 +30,7 @@ func (q *Queue) Name() string {
 
 // Clear clears all jobs from the queue
 func (q *Queue) Clear() error {
-	queueKey := fmt.Sprintf("queue:%s", q.name)
-	return q.redis.DeleteKey(queueKey)
+	return q.broker.DeleteKey("queue:" + q.name)
 }
 
 // Stats provides queue statistics
@@ -43,8 +42,8 @@ type Stats struct {
 }
 
 // GetStats returns current statistics
-func GetStats(redis *RedisClient) (*Stats, error) {
-	statsMap, err := redis.GetStats()
+func GetStats(b broker.Broker) (*Stats, error) {
+	statsMap, err := b.GetStats()
 	if err != nil {
 		return nil, err
 	}

@@ -10,12 +10,12 @@ import (
 )
 
 var (
-	redisClient *sidekiq.RedisClient
+	broker sidekiq.Broker
 )
 
 // Mount mounts the Sidekiq web UI on the given router
-func Mount(router *mux.Router, path string, redis *sidekiq.RedisClient) {
-	redisClient = redis
+func Mount(router *mux.Router, path string, b sidekiq.Broker) {
+	broker = b
 	subrouter := router.PathPrefix(path).Subrouter()
 	
 	subrouter.HandleFunc("", indexHandler).Methods("GET")
@@ -104,7 +104,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func statsHandler(w http.ResponseWriter, r *http.Request) {
-	stats, err := sidekiq.GetStats(redisClient)
+	stats, err := sidekiq.GetStats(broker)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -115,7 +115,7 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func queuesHandler(w http.ResponseWriter, r *http.Request) {
-	stats, err := sidekiq.GetStats(redisClient)
+	stats, err := sidekiq.GetStats(broker)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -129,7 +129,7 @@ func clearQueueHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	queueName := vars["queue"]
 
-	queue := sidekiq.NewQueue(queueName, redisClient)
+	queue := sidekiq.NewQueue(queueName, broker)
 	if err := queue.Clear(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

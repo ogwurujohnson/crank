@@ -21,8 +21,13 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Connect to Redis
-	redis, err := sidekiq.NewRedisClient(config.Redis.URL, config.Redis.GetNetworkTimeout())
+	// Connect to Redis (with optional TLS from config)
+	redis, err := sidekiq.NewRedisClientWithConfig(sidekiq.RedisBrokerConfig{
+		URL:                   config.Redis.URL,
+		Timeout:               config.Redis.GetNetworkTimeout(),
+		UseTLS:                config.Redis.UseTLS,
+		TLSInsecureSkipVerify: config.Redis.TLSInsecureSkipVerify,
+	})
 	if err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}

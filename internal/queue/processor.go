@@ -1,4 +1,4 @@
-package sidekiq
+package queue
 
 import (
 	"context"
@@ -6,12 +6,16 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"github.com/quest/sidekiq-go/internal/broker"
+	"github.com/quest/sidekiq-go/internal/config"
+	"github.com/quest/sidekiq-go/internal/payload"
 )
 
 // Processor manages job processing with a worker pool
 type Processor struct {
-	config      *Config
-	redis       *RedisClient
+	cfg         *config.Config
+	broker      broker.Broker
 	queues      []string
 	workers     chan struct{}
 	wg          sync.WaitGroup
@@ -22,17 +26,14 @@ type Processor struct {
 }
 
 // NewProcessor creates a new processor instance
-func NewProcessor(config *Config, redis *RedisClient) (*Processor, error) {
-	// Build queue list from config (with weights)
+func NewProcessor(cfg *config.Config, b broker.Broker) (*Processor, error) {
 	queues := make([]string, 0)
-	for _, qc := range config.Queues {
-		// Add queue name multiple times based on weight
+	for _, qc := range cfg.Queues {
 		for i := 0; i < qc.Weight; i++ {
 			queues = append(queues, qc.Name)
 		}
 	}
 
-	// If no queues configured, use default
 	if len(queues) == 0 {
 		queues = []string{"default"}
 	}
@@ -40,14 +41,14 @@ func NewProcessor(config *Config, redis *RedisClient) (*Processor, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	p := &Processor{
-		config:      config,
-		redis:       redis,
+		cfg:         cfg,
+		broker:      b,
 		queues:      queues,
-		workers:     make(chan struct{}, config.Concurrency),
+		workers:     make(chan struct{}, cfg.Concurrency),
 		ctx:         ctx,
 		cancel:      cancel,
 		retryTicker: time.NewTicker(5 * time.Second),
-		verbose:     config.Verbose,
+		verbose:     cfg.Verbose,
 	}
 
 	return p, nil
@@ -56,16 +57,14 @@ func NewProcessor(config *Config, redis *RedisClient) (*Processor, error) {
 // Start begins processing jobs
 func (p *Processor) Start() error {
 	if p.verbose {
-		log.Printf("Starting Sidekiq processor with concurrency=%d, queues=%v", p.config.Concurrency, p.queues)
+		log.Printf("Starting Sidekiq processor with concurrency=%d, queues=%v", p.cfg.Concurrency, p.queues)
 	}
 
-	// Start worker goroutines
-	for i := 0; i < p.config.Concurrency; i++ {
+	for i := 0; i < p.cfg.Concurrency; i++ {
 		p.wg.Add(1)
 		go p.worker()
 	}
 
-	// Start retry processor
 	p.wg.Add(1)
 	go p.retryProcessor()
 
@@ -87,7 +86,6 @@ func (p *Processor) Stop() {
 	}
 }
 
-// worker is the main worker loop
 func (p *Processor) worker() {
 	defer p.wg.Done()
 
@@ -96,11 +94,9 @@ func (p *Processor) worker() {
 		case <-p.ctx.Done():
 			return
 		default:
-			// Acquire worker slot
 			p.workers <- struct{}{}
 
-			// Dequeue job with timeout
-			job, queue, err := p.redis.Dequeue(p.queues, 1*time.Second)
+			job, queue, err := p.broker.Dequeue(p.queues, 1*time.Second)
 			if err != nil {
 				<-p.workers
 				if p.verbose {
@@ -111,11 +107,10 @@ func (p *Processor) worker() {
 
 			if job == nil {
 				<-p.workers
-				continue // Timeout, try again
+				continue
 			}
 
-			// Process job in goroutine to free up worker slot
-			go func(j *Job, q string) {
+			go func(j *payload.Job, q string) {
 				defer func() { <-p.workers }()
 				p.processJob(j, q)
 			}(job, queue)
@@ -123,17 +118,23 @@ func (p *Processor) worker() {
 	}
 }
 
-// processJob processes a single job
-func (p *Processor) processJob(job *Job, queue string) {
+func (p *Processor) processJob(job *payload.Job, queue string) {
 	start := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), p.config.GetTimeout())
+	ctx, cancel := context.WithTimeout(context.Background(), p.cfg.GetTimeout())
 	defer cancel()
 
 	if p.verbose {
 		log.Printf("Processing %s", job)
 	}
 
-	// Get worker
+	if v := payload.GetDefaultValidator(); v != nil {
+		if err := v.Validate(job); err != nil {
+			log.Printf("Job %s failed validation: %v", job.JID, err)
+			p.handleFailure(job, err)
+			return
+		}
+	}
+
 	worker, err := GetWorker(job.Class)
 	if err != nil {
 		log.Printf("Error getting worker '%s': %v", job.Class, err)
@@ -141,7 +142,6 @@ func (p *Processor) processJob(job *Job, queue string) {
 		return
 	}
 
-	// Execute worker through middleware chain
 	chain := GetMiddlewareChain()
 	err = chain.Execute(ctx, job, func() error {
 		return worker.Perform(ctx, job.Args...)
@@ -160,12 +160,10 @@ func (p *Processor) processJob(job *Job, queue string) {
 	}
 }
 
-// handleFailure handles job failures with retry logic
-func (p *Processor) handleFailure(job *Job, err error) {
+func (p *Processor) handleFailure(job *payload.Job, err error) {
 	job.RetryCount++
 
 	if job.RetryCount <= job.Retry {
-		// Calculate exponential backoff
 		backoff := time.Duration(1<<uint(job.RetryCount)) * time.Second
 		retryAt := time.Now().Add(backoff)
 
@@ -173,22 +171,20 @@ func (p *Processor) handleFailure(job *Job, err error) {
 			log.Printf("Scheduling retry for job %s (attempt %d/%d) at %v", job.JID, job.RetryCount, job.Retry, retryAt)
 		}
 
-		if err := p.redis.AddToRetry(job, retryAt); err != nil {
+		if err := p.broker.AddToRetry(job, retryAt); err != nil {
 			log.Printf("Error adding job to retry: %v", err)
 		}
 	} else {
-		// Max retries exceeded, move to dead
 		if p.verbose {
 			log.Printf("Job %s exceeded max retries, moving to dead queue", job.JID)
 		}
 
-		if err := p.redis.AddToDead(job); err != nil {
+		if err := p.broker.AddToDead(job); err != nil {
 			log.Printf("Error adding job to dead queue: %v", err)
 		}
 	}
 }
 
-// retryProcessor processes retry jobs
 func (p *Processor) retryProcessor() {
 	defer p.wg.Done()
 
@@ -202,9 +198,8 @@ func (p *Processor) retryProcessor() {
 	}
 }
 
-// processRetries processes jobs ready for retry
 func (p *Processor) processRetries() {
-	jobs, err := p.redis.GetRetryJobs(100)
+	jobs, err := p.broker.GetRetryJobs(100)
 	if err != nil {
 		if p.verbose {
 			log.Printf("Error getting retry jobs: %v", err)
@@ -213,24 +208,20 @@ func (p *Processor) processRetries() {
 	}
 
 	for _, job := range jobs {
-		// Remove from retry set
-		if err := p.redis.RemoveFromRetry(job); err != nil {
+		if err := p.broker.RemoveFromRetry(job); err != nil {
 			if p.verbose {
 				log.Printf("Error removing job from retry: %v", err)
 			}
 			continue
 		}
 
-		// Re-enqueue to original queue
-		if err := p.redis.Enqueue(job.Queue, job); err != nil {
+		if err := p.broker.Enqueue(job.Queue, job); err != nil {
 			if p.verbose {
 				log.Printf("Error re-enqueueing retry job: %v", err)
 			}
-			// Put it back in retry
-			p.redis.AddToRetry(job, time.Now().Add(1*time.Minute))
+			p.broker.AddToRetry(job, time.Now().Add(1*time.Minute))
 		} else if p.verbose {
 			log.Printf("Re-enqueued retry job %s to queue %s", job.JID, job.Queue)
 		}
 	}
 }
-

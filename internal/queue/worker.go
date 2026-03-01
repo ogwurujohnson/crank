@@ -1,4 +1,4 @@
-package sidekiq
+package queue
 
 import (
 	"context"
@@ -13,7 +13,7 @@ type Worker interface {
 
 var (
 	workers     = make(map[string]Worker)
-	workersLock sync.RWMutex
+	workersLock  sync.RWMutex
 )
 
 // RegisterWorker registers a worker class
@@ -44,4 +44,3 @@ func ListWorkers() []string {
 	}
 	return classes
 }
-

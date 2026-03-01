@@ -1,19 +1,17 @@
 # Sidekiq-Go
 
-A high-performance background job processor for Go, inspired by [Sidekiq](https://github.com/sidekiq/sidekiq). Uses goroutines for concurrent job processing and Redis as the job store.
+A high-performance background job processor for Go, inspired by [Sidekiq](https://github.com/sidekiq/sidekiq). Uses a broker abstraction (Redis by default), a managed worker pool, and goroutines for concurrent job processing.
 
 ## Features
 
-- **Thread-safe job processing** using goroutines
-- **Redis-backed job queue** with priority support
-- **Automatic retries** with exponential backoff
-- **Web UI** for monitoring and job management
-- **Weighted queues** for priority-based processing
-- **Middleware support** for custom processing hooks
-- **YAML configuration** support
-- **Production-ready** with proper error handling and logging
-- **Graceful shutdown** support
-- **Queue statistics** and monitoring
+- **Broker abstraction** — Enqueue, Dequeue, and Ack behind an interface (Redis included; others pluggable)
+- **Worker pool manager** — `Processor` runs a configurable pool of workers with graceful shutdown
+- **Redis-backed queue** — Weighted queues, automatic retries with exponential backoff, dead job set
+- **Web UI** — Monitoring, queue stats, and clear-queue actions
+- **Middleware** — Chain hooks around job execution (logging, metrics, redaction)
+- **Security** — Optional payload validation, argument redaction for logs, TLS for Redis
+- **YAML configuration** — Queues, concurrency, timeouts, Redis URL (and TLS options)
+- **Production-ready** — Graceful shutdown (SIGTERM/SIGINT), timeouts, DLQ
 
 ## Requirements
 
@@ -23,77 +21,119 @@ A high-performance background job processor for Go, inspired by [Sidekiq](https:
 ## Installation
 
 ```bash
-go mod download
+go get github.com/quest/sidekiq-go
 ```
 
-Or add to your project:
-```bash
-go get github.com/quest/sidekiq-go
+## Architecture
+
+The codebase is organized around a **broker-based** design with a single public package and internal layout:
+
+```
+github.com/quest/sidekiq-go/
+├── sidekiq.go              # Public API (re-exports)
+├── cmd/sidekiq/            # Optional: standalone worker binary
+├── internal/
+│   ├── broker/             # Broker interface + Redis implementation
+│   ├── config/             # YAML config, queue weights, Redis/TLS options
+│   ├── payload/            # Job struct, serialization, validator, redactor
+│   └── queue/              # Processor (worker pool), Queue, Worker registry, middleware
+├── pkg/sdk/                # Client for enqueueing jobs
+└── web/                    # Web UI (stats, queues, clear)
+```
+
+- **Producer**: Your app (or `examples/simple_worker`, `examples/web_server`) uses the **Client** to enqueue jobs; the client talks to the **Broker** (e.g. Redis).
+- **Broker**: Interface for Enqueue, Dequeue, Ack, retry/dead sets, and stats. Default implementation is **Redis** (`NewRedisClient` / `NewRedisClientWithConfig`).
+- **Consumer**: The **Processor** (worker pool manager) pulls jobs from the broker, runs payload validation and middleware, dispatches to registered **Worker** implementations, and handles retries and dead jobs. Run it via `cmd/sidekiq` or by starting the processor inside your own binary.
+
+Data flow:
+
+```
+Enqueue:  Client.Enqueue() → Broker.Enqueue() → Redis LPUSH queue:{name}
+Process:  Processor → Broker.Dequeue() (BRPOP) → validate → middleware → Worker.Perform()
+Failure:  Broker.AddToRetry() (backoff) or Broker.AddToDead() (DLQ)
 ```
 
 ## Quick Start
 
-### 1. Define a Worker
+### 1. Define a worker and enqueue jobs (producer)
 
 ```go
 package main
 
 import (
-    "context"
-    "fmt"
-    "time"
-    "github.com/quest/sidekiq-go"
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/quest/sidekiq-go"
 )
 
 type EmailWorker struct{}
 
 func (w *EmailWorker) Perform(ctx context.Context, args ...interface{}) error {
-    userID := args[0].(float64) // JSON numbers come as float64
-    fmt.Printf("Sending email to user %v\n", userID)
-    // Your email sending logic here
-    return nil
+	if len(args) < 1 {
+		return fmt.Errorf("expected at least 1 argument")
+	}
+	userID, ok := args[0].(float64) // JSON numbers unmarshal as float64
+	if !ok {
+		return fmt.Errorf("invalid user ID type")
+	}
+	fmt.Printf("Sending email to user %.0f\n", userID)
+	// Your logic here
+	return nil
 }
 
 func main() {
-    // Connect to Redis
-    redis, _ := sidekiq.NewRedisClient("redis://localhost:6379/0", 5*time.Second)
-    defer redis.Close()
-    
-    // Initialize client
-    client := sidekiq.NewClient(redis)
-    sidekiq.SetGlobalClient(client)
-    
-    // Register worker
-    sidekiq.RegisterWorker("EmailWorker", &EmailWorker{})
-    
-    // Enqueue a job
-    jid, _ := sidekiq.Enqueue("EmailWorker", "default", 123)
-    fmt.Printf("Enqueued job: %s\n", jid)
+	redis, err := sidekiq.NewRedisClient("redis://localhost:6379/0", 5*time.Second)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer redis.Close()
+
+	client := sidekiq.NewClient(redis)
+	sidekiq.SetGlobalClient(client)
+	sidekiq.RegisterWorker("EmailWorker", &EmailWorker{})
+
+	jid, err := sidekiq.Enqueue("EmailWorker", "default", 123)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Enqueued job: %s\n", jid)
 }
 ```
 
-### 2. Start the Worker Process
+### 2. Run the worker process (consumer)
+
+Use the standalone worker (loads config and starts the Processor):
 
 ```bash
-# Using make
-make run
+# Ensure Redis is running, then:
+go run ./cmd/sidekiq/ -C config/sidekiq.yml
+```
 
-# Or directly
-go run cmd/sidekiq/main.go -C config/sidekiq.yml
+Or build and run:
 
-# Or build first
+```bash
 make build
 ./bin/sidekiq -C config/sidekiq.yml
 ```
 
 ### 3. Configuration
 
-Create `config/sidekiq.yml`:
+The library does **not** read any config file automatically. You create a `*sidekiq.Config` by either:
+
+- **`sidekiq.LoadConfig(path)`** — load from a YAML file (any path you choose)
+- **Build it in code** — construct `sidekiq.Config` manually and pass it to `NewProcessor`
+
+You do **not** need to provide `config/sidekiq.yml` in your project. That path is just the default used by `cmd/sidekiq` when you run `./bin/sidekiq -C config/sidekiq.yml`. You can use another path, another config format, or no file at all.
+
+Example YAML format (for use with `LoadConfig`):
 
 ```yaml
 concurrency: 10
 queues:
-  - [critical, 5]  # Queue name and weight (priority)
+  - [critical, 5]
   - [default, 3]
   - [low, 1]
 timeout: 8
@@ -101,129 +141,181 @@ verbose: true
 redis:
   url: redis://localhost:6379/0
   network_timeout: 5
+  # use_tls: true
+  # tls_insecure_skip_verify: false  # dev only
 ```
 
-Configuration options:
-- `concurrency`: Number of concurrent workers (goroutines)
-- `queues`: List of queues with weights (higher weight = more priority)
-- `timeout`: Job timeout in seconds
-- `verbose`: Enable verbose logging
-- `redis.url`: Redis connection URL (can use `REDIS_URL` env var)
-- `redis.network_timeout`: Network timeout in seconds
+- `concurrency`: Number of worker goroutines in the pool.
+- `queues`: Name and weight; higher weight = more polling share.
+- `timeout`: Job execution timeout in seconds.
+- `redis.url`: Overridable by `REDIS_URL`. Use `rediss://` or set `use_tls: true` for TLS.
 
-## Web UI
+**Config without a file:**
 
-Mount the Web UI in your application:
+```go
+config := &sidekiq.Config{
+	Concurrency: 10,
+	Timeout:     8,
+	Verbose:    true,
+	Queues:     []sidekiq.QueueConfig{{Name: "default", Weight: 1}},
+	Redis: sidekiq.RedisConfig{
+		URL:             os.Getenv("REDIS_URL"),
+		NetworkTimeout:  5,
+	},
+}
+processor, _ := sidekiq.NewProcessor(config, broker)
+```
+
+## Example usage
+
+### Enqueue with options
+
+```go
+jid, err := sidekiq.EnqueueWithOptions("EmailWorker", "critical", &sidekiq.JobOptions{
+	Retry:     intPtr(3),
+	Backtrace: boolPtr(true),
+}, 789)
+```
+
+### Web UI (same broker as client)
 
 ```go
 import (
-    "github.com/gorilla/mux"
-    "github.com/quest/sidekiq-go/web"
+	"github.com/gorilla/mux"
+	"github.com/quest/sidekiq-go/web"
 )
 
-// In your HTTP server setup
 router := mux.NewRouter()
-web.Mount(router, "/sidekiq", redisClient)
+web.Mount(router, "/sidekiq", redis) // redis implements sidekiq.Broker
+// Visit http://localhost:8080/sidekiq for stats and queue management
 ```
 
-Access at `http://localhost:8080/sidekiq` to view:
-- Queue statistics
-- Queue sizes
-- Retry and dead job counts
-- Clear queues
-
-## Advanced Usage
-
-### Job Options
+### Run processor inside your app
 
 ```go
-options := &sidekiq.JobOptions{
-    Retry:     intPtr(3),
-    Backtrace: boolPtr(true),
-}
-jid, _ := sidekiq.EnqueueWithOptions("EmailWorker", "critical", options, 123)
+config, _ := sidekiq.LoadConfig("config/sidekiq.yml")
+broker, _ := sidekiq.NewRedisClient(config.Redis.URL, config.Redis.GetNetworkTimeout())
+defer broker.Close()
+
+processor, _ := sidekiq.NewProcessor(config, broker)
+processor.Start()
+defer processor.Stop()
+
+// Your HTTP server or other work here
 ```
 
-### Middleware
+### Middleware and logging with redaction
 
 ```go
+sidekiq.AddMiddleware(sidekiq.LoggingMiddleware) // logs failures with redacted args
+
+// Or custom middleware
 sidekiq.AddMiddleware(func(ctx context.Context, job *sidekiq.Job, next func() error) error {
-    start := time.Now()
-    defer func() {
-        log.Printf("Job %s took %v", job.JID, time.Since(start))
-    }()
-    return next()
+	start := time.Now()
+	err := next()
+	log.Printf("Job %s took %v", job.JID, time.Since(start))
+	return err
 })
 ```
 
-### Queue Management
+### Payload validation and redaction
 
 ```go
-queue := sidekiq.NewQueue("default", redisClient)
-size, _ := queue.Size()
-queue.Clear() // Clear all jobs
+// Validate job class and arg count (treat payload as untrusted)
+sidekiq.SetValidator(sidekiq.ChainValidator{
+	sidekiq.SafeClassPattern(),
+	sidekiq.MaxArgsCount(10),
+})
 
-stats, _ := sidekiq.GetStats(redisClient)
-fmt.Printf("Processed: %d, Retry: %d, Dead: %d\n", 
-    stats.Processed, stats.Retry, stats.Dead)
+// Redact sensitive args in logs (default is masking)
+sidekiq.SetRedactor(sidekiq.NewFieldMaskingRedactor([]string{"password", "token"}))
 ```
 
-## Architecture
+### Queue and stats
 
-- **Client**: Enqueues jobs to Redis
-- **Server/Processor**: Processes jobs using worker pool with goroutines
-- **Worker**: Implements the `Worker` interface (`Perform` method)
-- **Queue**: Redis lists for job storage
-- **Retry**: Automatic retry with exponential backoff (stored in Redis sorted set)
-- **Dead Jobs**: Jobs that exceeded max retries (stored in Redis sorted set)
+```go
+queue := sidekiq.NewQueue("default", broker)
+size, _ := queue.Size()
+_ = queue.Clear()
 
-## Examples
+stats, _ := sidekiq.GetStats(broker)
+fmt.Printf("Processed: %d, Retry: %d, Dead: %d\n", stats.Processed, stats.Retry, stats.Dead)
+```
 
-See the `examples/` directory for:
-- Simple worker example
-- Web server with Sidekiq UI
-- Best practices
+### Custom broker
 
-Run examples:
+You can use your own backend by implementing the `sidekiq.Broker` interface. All entry points accept any `Broker`: `NewClient(broker)`, `NewProcessor(config, broker)`, `NewQueue(name, broker)`, `GetStats(broker)`, and `web.Mount(router, path, broker)`.
+
+Implement these methods (job types use `*sidekiq.Job`):
+
+| Method | Purpose |
+|--------|--------|
+| `Enqueue(queue string, job *Job) error` | Push a job onto the named queue |
+| `Dequeue(queues []string, timeout time.Duration) (*Job, string, error)` | Block until a job is available from any of the queues; return job and queue name |
+| `Ack(job *Job) error` | Optional: acknowledge after process (Redis uses no-op; at-most-once brokers can use this) |
+| `AddToRetry(job *Job, retryAt time.Time) error` | Schedule job for retry at given time |
+| `GetRetryJobs(limit int64) ([]*Job, error)` | Return jobs whose retry time has passed |
+| `RemoveFromRetry(job *Job) error` | Remove job from retry set (before re-enqueue) |
+| `AddToDead(job *Job) error` | Move job to dead set after max retries |
+| `GetQueueSize(queue string) (int64, error)` | Queue length for stats/UI |
+| `DeleteKey(key string) error` | Delete a key (e.g. for queue clear; key format is `queue:{name}` for the default) |
+| `GetStats() (map[string]interface{}, error)` | Return `processed`, `retry`, `dead` (int64), and `queues` (map[string]int64) |
+| `Close() error` | Release connections/resources |
+
+Example: plugging a custom broker into the client and processor:
+
+```go
+type MyBroker struct { /* your backend client */ }
+
+func (b *MyBroker) Enqueue(queue string, job *sidekiq.Job) error { /* ... */ }
+func (b *MyBroker) Dequeue(queues []string, timeout time.Duration) (*sidekiq.Job, string, error) { /* ... */ }
+func (b *MyBroker) Ack(job *sidekiq.Job) error { return nil }
+func (b *MyBroker) AddToRetry(job *sidekiq.Job, retryAt time.Time) error { /* ... */ }
+func (b *MyBroker) GetRetryJobs(limit int64) ([]*sidekiq.Job, error) { /* ... */ }
+func (b *MyBroker) RemoveFromRetry(job *sidekiq.Job) error { /* ... */ }
+func (b *MyBroker) AddToDead(job *sidekiq.Job) error { /* ... */ }
+func (b *MyBroker) GetQueueSize(queue string) (int64, error) { /* ... */ }
+func (b *MyBroker) DeleteKey(key string) error { /* ... */ }
+func (b *MyBroker) GetStats() (map[string]interface{}, error) { /* ... */ }
+func (b *MyBroker) Close() error { return nil }
+
+// Use it like Redis
+broker := &MyBroker{}
+client := sidekiq.NewClient(broker)
+processor, _ := sidekiq.NewProcessor(config, broker)
+```
+
+## Examples in this repo
+
+| Example | Description |
+|--------|-------------|
+| `examples/simple_worker/` | Enqueues jobs; run a worker process separately to consume them. |
+| `examples/web_server/` | HTTP server that enqueues jobs and mounts the Sidekiq Web UI. |
+
+Run the simple enqueue example (then start the worker in another terminal):
+
 ```bash
-make examples
+go run ./examples/simple_worker/
+```
+
+Run the web example (UI at `/sidekiq`, enqueue via `POST /api/jobs?user_id=123`):
+
+```bash
+go run ./examples/web_server/
 ```
 
 ## Deployment
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for:
-- Systemd service setup
-- Docker deployment
-- Kubernetes configuration
-- Production best practices
-
-## Performance
-
-Sidekiq-Go is designed for high throughput:
-- Uses goroutines for efficient concurrency
-- Minimal overhead with direct Redis operations
-- Efficient job serialization/deserialization
-- Weighted queue polling for priority processing
+See [DEPLOYMENT.md](DEPLOYMENT.md) for systemd, Docker, Kubernetes, and production notes.
 
 ## Comparison with Sidekiq (Ruby)
 
 | Feature | Sidekiq (Ruby) | Sidekiq-Go |
-|---------|---------------|------------|
+|--------|-----------------|------------|
 | Language | Ruby | Go |
-| Concurrency Model | Threads | Goroutines |
-| Performance | High | Very High |
-| Memory Usage | Moderate | Low |
-| Type Safety | Dynamic | Static |
-| Deployment | Ruby-specific | Standard Go binaries |
-
-## Contributing
-
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+| Concurrency | Threads | Goroutines + worker pool |
+| Broker | Redis | Broker interface (Redis default) |
+| Deployment | Ruby stack | Single Go binary |
 
 ## License
 
@@ -231,5 +323,5 @@ MIT
 
 ## References
 
-- [Original Sidekiq (Ruby)](https://github.com/sidekiq/sidekiq)
-- [Sidekiq Documentation](https://github.com/sidekiq/sidekiq/wiki)
+- [Sidekiq (Ruby)](https://github.com/sidekiq/sidekiq)
+- [Sidekiq wiki](https://github.com/sidekiq/sidekiq/wiki)

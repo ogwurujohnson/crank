@@ -1,4 +1,4 @@
-package sidekiq
+package config
 
 import (
 	"fmt"
@@ -10,11 +10,11 @@ import (
 
 // Config represents Sidekiq configuration
 type Config struct {
-	Concurrency int                 `yaml:"concurrency"`
-	Queues      []QueueConfig       `yaml:"queues"`
-	Timeout     int                 `yaml:"timeout"`
-	Verbose     bool                `yaml:"verbose"`
-	Redis       RedisConfig         `yaml:"redis"`
+	Concurrency int           `yaml:"concurrency"`
+	Queues      []QueueConfig  `yaml:"queues"`
+	Timeout     int            `yaml:"timeout"`
+	Verbose     bool           `yaml:"verbose"`
+	Redis       RedisConfig    `yaml:"redis"`
 }
 
 // QueueConfig represents queue priority configuration
@@ -27,7 +27,6 @@ type QueueConfig struct {
 
 // UnmarshalYAML implements custom YAML unmarshaling for queue config
 func (qc *QueueConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	// Try to unmarshal as array [name, weight]
 	var arr []interface{}
 	if err := unmarshal(&arr); err == nil && len(arr) >= 1 {
 		if name, ok := arr[0].(string); ok {
@@ -39,13 +38,12 @@ func (qc *QueueConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 					qc.Weight = int(weight)
 				}
 			} else {
-				qc.Weight = 1 // default weight
+				qc.Weight = 1
 			}
 			return nil
 		}
 	}
 
-	// Fall back to map format
 	var m map[string]interface{}
 	if err := unmarshal(&m); err != nil {
 		return err
@@ -64,51 +62,49 @@ func (qc *QueueConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	} else if priority, ok := m["priority"].(float64); ok {
 		qc.Priority = int(priority)
 	}
-
-	// Default weight if not set
 	if qc.Weight == 0 {
 		qc.Weight = 1
 	}
-
 	return nil
 }
 
 // RedisConfig represents Redis connection configuration
 type RedisConfig struct {
-	URL            string `yaml:"url"`
-	NetworkTimeout int    `yaml:"network_timeout"`
+	URL                   string `yaml:"url"`
+	NetworkTimeout        int    `yaml:"network_timeout"`
+	UseTLS                bool   `yaml:"use_tls"`
+	TLSInsecureSkipVerify bool   `yaml:"tls_insecure_skip_verify"`
 }
 
-// LoadConfig loads configuration from a YAML file
-func LoadConfig(path string) (*Config, error) {
+// Load loads configuration from a YAML file
+func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	// Set defaults
-	if config.Concurrency == 0 {
-		config.Concurrency = 10
+	if cfg.Concurrency == 0 {
+		cfg.Concurrency = 10
 	}
-	if config.Timeout == 0 {
-		config.Timeout = 8
+	if cfg.Timeout == 0 {
+		cfg.Timeout = 8
 	}
-	if config.Redis.URL == "" {
-		config.Redis.URL = os.Getenv("REDIS_URL")
-		if config.Redis.URL == "" {
-			config.Redis.URL = "redis://localhost:6379/0"
+	if cfg.Redis.URL == "" {
+		cfg.Redis.URL = os.Getenv("REDIS_URL")
+		if cfg.Redis.URL == "" {
+			cfg.Redis.URL = "redis://localhost:6379/0"
 		}
 	}
-	if config.Redis.NetworkTimeout == 0 {
-		config.Redis.NetworkTimeout = 5
+	if cfg.Redis.NetworkTimeout == 0 {
+		cfg.Redis.NetworkTimeout = 5
 	}
 
-	return &config, nil
+	return &cfg, nil
 }
 
 // GetTimeout returns timeout as duration
@@ -120,4 +116,3 @@ func (c *Config) GetTimeout() time.Duration {
 func (c *RedisConfig) GetNetworkTimeout() time.Duration {
 	return time.Duration(c.NetworkTimeout) * time.Second
 }
-
