@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/quest/sidekiq-go/internal/payload"
+	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
 // RedisBrokerConfig holds Redis connection options including TLS
@@ -33,16 +33,21 @@ func NewRedisBroker(redisURL string, timeout time.Duration) (*RedisBroker, error
 	})
 }
 
-// NewRedisBrokerWithConfig creates a Redis broker with TLS and hardening options
+// NewRedisBrokerWithConfig creates a Redis broker with TLS and hardening options.
+// It returns an error if the URL is invalid or if Redis is not available (connection verified with Ping).
 func NewRedisBrokerWithConfig(cfg RedisBrokerConfig) (*RedisBroker, error) {
-	u := cfg.URL
+	u := strings.TrimSpace(cfg.URL)
+	if u == "" {
+		return nil, fmt.Errorf("broker not available: Redis URL is empty (set redis.url in config or REDIS_URL)")
+	}
+
 	if cfg.UseTLS && !strings.HasPrefix(u, "rediss://") {
 		u = strings.Replace(u, "redis://", "rediss://", 1)
 	}
 
 	opt, err := redis.ParseURL(u)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse Redis URL: %w", err)
+		return nil, fmt.Errorf("broker not available: invalid Redis URL: %w", err)
 	}
 
 	opt.DialTimeout = cfg.Timeout
@@ -60,7 +65,8 @@ func NewRedisBrokerWithConfig(cfg RedisBrokerConfig) (*RedisBroker, error) {
 	ctx := context.Background()
 
 	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
+		_ = client.Close()
+		return nil, fmt.Errorf("broker not available: Redis unreachable at %q: %w", opt.Addr, err)
 	}
 
 	return &RedisBroker{

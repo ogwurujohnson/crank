@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/quest/sidekiq-go"
-	"github.com/quest/sidekiq-go/web"
+	"github.com/ogwurujohnson/crank"
+	"github.com/ogwurujohnson/crank/web"
 )
 
 // WebEmailWorker sends emails (for web server example)
@@ -33,22 +33,22 @@ func (w *WebEmailWorker) Perform(ctx context.Context, args ...interface{}) error
 
 func main() {
 	// Connect to Redis
-	redis, err := sidekiq.NewRedisClient("redis://localhost:6379/0", 5*time.Second)
+	redis, err := crank.NewRedisClient("redis://localhost:6379/0", 5*time.Second)
 	if err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
 	defer redis.Close()
 
 	// Initialize client
-	client := sidekiq.NewClient(redis)
-	sidekiq.SetGlobalClient(client)
+	client := crank.NewClient(redis)
+	crank.SetGlobalClient(client)
 
 	// Register workers
-	sidekiq.RegisterWorker("WebEmailWorker", &WebEmailWorker{})
+	crank.RegisterWorker("WebEmailWorker", &WebEmailWorker{})
 
-	// Setup HTTP server with Sidekiq Web UI
+	// Setup HTTP server with Crank Web UI
 	router := mux.NewRouter()
-	web.Mount(router, "/sidekiq", redis)
+	web.Mount(router, "/crank", redis)
 
 	// API endpoint to enqueue jobs
 	router.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +64,7 @@ func main() {
 			return
 		}
 
-		jid, err := sidekiq.Enqueue("WebEmailWorker", "default", userIDFloat)
+		jid, err := crank.Enqueue("WebEmailWorker", "default", userIDFloat)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -77,14 +77,13 @@ func main() {
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprintf(w, `
-			<h1>Sidekiq-Go Example</h1>
-			<p><a href="/sidekiq">View Sidekiq Web UI</a></p>
+			<h1>Crank Example</h1>
+			<p><a href="/crank">View Crank Web UI</a></p>
 			<p>Enqueue a job: <code>curl -X POST "http://localhost:8080/api/jobs?user_id=123"</code></p>
 		`)
 	})
 
 	log.Println("Server starting on :8080")
-	log.Println("Sidekiq Web UI: http://localhost:8080/sidekiq")
+	log.Println("Crank Web UI: http://localhost:8080/crank")
 	log.Fatal(http.ListenAndServe(":8080", router))
 }
-

@@ -1,16 +1,16 @@
-// Package sidekiq provides a Sidekiq-compatible job queue for Go.
+// Package crank provides a background job queue for Go.
 // All public API is re-exported from internal packages.
-package sidekiq
+package crank
 
 import (
 	"regexp"
 	"time"
 
-	"github.com/quest/sidekiq-go/internal/broker"
-	"github.com/quest/sidekiq-go/internal/config"
-	"github.com/quest/sidekiq-go/internal/payload"
-	"github.com/quest/sidekiq-go/internal/queue"
-	"github.com/quest/sidekiq-go/pkg/sdk"
+	"github.com/ogwurujohnson/crank/internal/broker"
+	"github.com/ogwurujohnson/crank/internal/config"
+	"github.com/ogwurujohnson/crank/internal/payload"
+	"github.com/ogwurujohnson/crank/internal/queue"
+	"github.com/ogwurujohnson/crank/pkg/sdk"
 )
 
 // ----- broker -----
@@ -18,7 +18,7 @@ import (
 // Broker is the storage abstraction for job queues. The library uses it for
 // enqueue, dequeue, retries, and dead jobs. Implement this interface to use
 // a custom backend (e.g. PostgreSQL, NATS, or an in-memory store) instead of Redis.
-// All public APIs (NewClient, NewProcessor, NewQueue, GetStats, web.Mount) accept
+// All public APIs (NewClient, NewEngine, NewQueue, GetStats, web.Mount) accept
 // any Broker implementation.
 type Broker = broker.Broker
 
@@ -69,10 +69,15 @@ type (
 )
 
 var (
-	NewProcessor = queue.NewProcessor
-	NewQueue     = queue.NewQueue
-	GetStats     = queue.GetStats
+	NewQueue = queue.NewQueue
+	GetStats = queue.GetStats
 )
+
+// NewProcessor creates a processor using the global worker registry (RegisterWorker).
+// For per-engine registration, use NewEngine and engine.Register instead.
+func NewProcessor(cfg *Config, b Broker) (*Processor, error) {
+	return queue.NewProcessor(cfg, b, nil)
+}
 
 // ----- worker -----
 type Worker = queue.Worker
@@ -88,10 +93,10 @@ type MiddlewareFunc = queue.MiddlewareFunc
 type MiddlewareChain = queue.MiddlewareChain
 
 var (
-	NewMiddlewareChain  = queue.NewMiddlewareChain
-	AddMiddleware       = queue.AddMiddleware
-	GetMiddlewareChain  = queue.GetMiddlewareChain
-	LoggingMiddleware   = queue.LoggingMiddleware
+	NewMiddlewareChain = queue.NewMiddlewareChain
+	AddMiddleware      = queue.AddMiddleware
+	GetMiddlewareChain = queue.GetMiddlewareChain
+	LoggingMiddleware  = queue.LoggingMiddleware
 )
 
 // ----- redactor -----
@@ -102,8 +107,8 @@ var (
 	MaskingRedactor = payload.MaskingRedactor{}
 )
 
-func SetRedactor(r payload.Redactor)   { payload.SetDefaultRedactor(r) }
-func GetRedactor() payload.Redactor   { return payload.GetDefaultRedactor() }
+func SetRedactor(r payload.Redactor) { payload.SetDefaultRedactor(r) }
+func GetRedactor() payload.Redactor  { return payload.GetDefaultRedactor() }
 func NewFieldMaskingRedactor(keys []string) *payload.FieldMaskingRedactor {
 	return &payload.FieldMaskingRedactor{Keys: keys}
 }
@@ -120,7 +125,7 @@ var (
 )
 
 func SetValidator(v payload.Validator) { payload.SetDefaultValidator(v) }
-func GetValidator() payload.Validator { return payload.GetDefaultValidator() }
+func GetValidator() payload.Validator  { return payload.GetDefaultValidator() }
 
 func SafeClassPattern() payload.Validator {
 	return payload.ClassPattern(regexp.MustCompile(`^[A-Za-z0-9_]+$`))

@@ -19,7 +19,7 @@ type Job struct {
 	CreatedAt  float64                `json:"created_at"`
 	EnqueuedAt float64                `json:"enqueued_at"`
 	Backtrace  bool                   `json:"backtrace"`
-	Metadata   map[string]interface{}  `json:"metadata,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // NewJob creates a new job instance

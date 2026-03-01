@@ -1,13 +1,13 @@
 .PHONY: build run test clean deps examples examples-web fmt lint
 
-# Build the Sidekiq CLI
+# Build the Crank CLI
 build:
 	mkdir -p bin
-	go build -o bin/sidekiq ./cmd/sidekiq/
+	go build -o bin/crank ./cmd/crank/
 
-# Run the Sidekiq worker
+# Run the Crank worker
 run: build
-	./bin/sidekiq -C config/sidekiq.yml
+	./bin/crank -C config/crank.yml
 
 # Install dependencies
 deps:
@@ -26,7 +26,7 @@ examples:
 
 examples-web:
 	@echo "Running web server example..."
-	@echo "Sidekiq UI will be at http://localhost:8080/sidekiq"
+	@echo "Crank UI will be at http://localhost:8080/crank"
 	@echo "Make sure Redis is running on localhost:6379"
 	go run ./examples/web_server/
 

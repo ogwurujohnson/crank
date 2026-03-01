@@ -8,4 +8,3 @@ verbose: true
 redis:
   url: redis://localhost:6379/0
   network_timeout: 5
-

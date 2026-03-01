@@ -11,12 +11,19 @@ type Worker interface {
 	Perform(ctx context.Context, args ...interface{}) error
 }
 
+// WorkerRegistry provides workers by class name. Used by Processor and by Engine.
+type WorkerRegistry interface {
+	GetWorker(className string) (Worker, error)
+}
+
 var (
 	workers     = make(map[string]Worker)
-	workersLock  sync.RWMutex
+	workersLock sync.RWMutex
 )
 
 // RegisterWorker registers a worker class
+// className is the name of the worker class, e.g. "EmailWorker"
+// should be renamed to interfaceName for clarity.
 func RegisterWorker(className string, worker Worker) {
 	workersLock.Lock()
 	defer workersLock.Unlock()

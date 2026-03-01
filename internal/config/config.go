@@ -8,13 +8,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents Sidekiq configuration
+// Config represents Crank configuration
 type Config struct {
 	Concurrency int           `yaml:"concurrency"`
-	Queues      []QueueConfig  `yaml:"queues"`
-	Timeout     int            `yaml:"timeout"`
-	Verbose     bool           `yaml:"verbose"`
-	Redis       RedisConfig    `yaml:"redis"`
+	Queues      []QueueConfig `yaml:"queues"`
+	Timeout     int           `yaml:"timeout"`
+	Verbose     bool          `yaml:"verbose"`
+	Redis       RedisConfig   `yaml:"redis"`
 }
 
 // QueueConfig represents queue priority configuration

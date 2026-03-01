@@ -3,8 +3,8 @@ package sdk
 import (
 	"fmt"
 
-	"github.com/quest/sidekiq-go/internal/broker"
-	"github.com/quest/sidekiq-go/internal/payload"
+	"github.com/ogwurujohnson/crank/internal/broker"
+	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
 var (
@@ -16,7 +16,7 @@ type Client struct {
 	broker broker.Broker
 }
 
-// NewClient creates a new Sidekiq client
+// NewClient creates a new Crank client
 func NewClient(b broker.Broker) *Client {
 	return &Client{broker: b}
 }
