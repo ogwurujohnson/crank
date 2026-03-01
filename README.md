@@ -1,17 +1,17 @@
 # Crank
 
-A high-performance background job processor for Go. Uses a broker abstraction (Redis by default), a managed worker pool, and goroutines for concurrent job processing.
+A sidekiq motivated high-performance background job processor for Go. Uses a broker abstraction (Redis by default), a managed worker pool, and channel-based backpressure so the processor never pulls work faster than workers can handle.
 
 ## Features
 
-- **Broker abstraction** — Enqueue, Dequeue, and Ack behind an interface (Redis included; others pluggable)
-- **Worker pool manager** — `Processor` runs a configurable pool of workers with graceful shutdown
-- **Redis-backed queue** — Weighted queues, automatic retries with exponential backoff, dead job set
-- **Web UI** — Monitoring, queue stats, and clear-queue actions
+- **Broker abstraction** — Enqueue, Dequeue, Ack, retry/dead sets, and stats behind an interface (Redis included; others pluggable)
+- **Worker pool + backpressure** — One fetcher dequeues into an unbuffered channel; N workers receive and process. When all workers are busy, the fetcher blocks so no new jobs are pulled until a worker is free
+- **Redis-backed queue** — Weighted queues, automatic retries with exponential backoff, dead job set; stats discover all queues via `queue:*` keys
+- **Web UI** — Stats, queue sizes, retry and dead job listing (JSON), and clear-queue; broker passed per mount (no global state)
 - **Middleware** — Chain hooks around job execution (logging, metrics, redaction)
-- **Security** — Optional payload validation, argument redaction for logs, TLS for Redis
-- **YAML configuration** — Queues, concurrency, timeouts, Redis URL (and TLS options)
-- **Production-ready** — Graceful shutdown (SIGTERM/SIGINT), timeouts, DLQ
+- **Security** — Optional payload validation, argument redaction for logs, TLS for Redis; protect clear-queue in production (auth/CSRF)
+- **YAML configuration** — Queues (name + weight), concurrency, timeouts, Redis URL and TLS options
+- **Production-ready** — Graceful shutdown (SIGTERM/SIGINT), job timeouts, DLQ, safe stats parsing (no panics on broker response)
 
 ## Requirements
 
@@ -43,14 +43,14 @@ github.com/ogwurujohnson/crank/
 ```
 
 - **Producer**: Your app (or `examples/simple_worker`, `examples/web_server`) uses the **Client** to enqueue jobs; the client talks to the **Broker** (e.g. Redis).
-- **Broker**: Interface for Enqueue, Dequeue, Ack, retry/dead sets, and stats. Default implementation is **Redis** (`NewRedisClient` / `NewRedisClientWithConfig`).
-- **Consumer**: The **Processor** (worker pool manager) pulls jobs from the broker, runs payload validation and middleware, dispatches to registered **Worker** implementations, and handles retries and dead jobs. Run it via `cmd/crank` or by starting the processor inside your own binary.
+- **Broker**: Interface for Enqueue, Dequeue, Ack, retry/dead sets, and stats. Default implementation is **Redis** (`NewRedisClient` / `NewRedisClientWithConfig`). Redis stats discover queue names via `KEYS queue:*`.
+- **Consumer**: The **Processor** runs one **fetcher** goroutine that dequeues and sends to an unbuffered **job channel**, and N **worker** goroutines that receive and process. When all workers are busy, the fetcher blocks on send (backpressure). Payload validation and middleware run before dispatching to registered **Worker** implementations; retries and dead jobs are handled automatically. Run via `cmd/crank` or by starting the processor inside your own binary.
 
 Data flow:
 
 ```
 Enqueue:  Client.Enqueue() → Broker.Enqueue() → Redis LPUSH queue:{name}
-Process:  Processor → Broker.Dequeue() (BRPOP) → validate → middleware → Worker.Perform()
+Process:  Fetcher → Broker.Dequeue() (BRPOP) → jobCh (blocks if all workers busy) → Worker → validate → middleware → Worker.Perform()
 Failure:  Broker.AddToRetry() (backoff) or Broker.AddToDead() (DLQ)
 ```
 
@@ -146,8 +146,8 @@ redis:
   # tls_insecure_skip_verify: false  # dev only
 ```
 
-- `concurrency`: Number of worker goroutines in the pool.
-- `queues`: Name and weight; higher weight = more polling share.
+- `concurrency`: Number of worker goroutines that process jobs (and the effective backpressure limit).
+- `queues`: Name and weight; higher weight = more polling share (e.g. `[critical, 5]` gets more fetcher attention than `[low, 1]`). The `priority` field is parsed from YAML but reserved for future use.
 - `timeout`: Job execution timeout in seconds.
 - `redis.url`: Overridable by `REDIS_URL`. Use `rediss://` or set `use_tls: true` for TLS.
 
@@ -180,6 +180,19 @@ jid, err := crank.EnqueueWithOptions("EmailWorker", "critical", &crank.JobOption
 
 ### Web UI (same broker as client)
 
+The Web UI is mounted with `web.Mount(router, path, broker)`. The broker is passed into every handler via closure, so you can mount multiple Crank UIs with different brokers on the same router.
+
+**Endpoints** (under the mount path, e.g. `/crank`):
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Dashboard (stats + queues) |
+| `/stats` | GET | JSON: `processed`, `retry`, `dead`, `queues` |
+| `/queues` | GET | JSON: queue name → size |
+| `/retries` | GET | JSON: `count`, `jobs` (retry set) |
+| `/dead` | GET | JSON: `count`, `jobs` (dead set) |
+| `/queues/{queue}/clear` | POST | Clear the named queue (destructive) |
+
 ```go
 import (
 	"github.com/gorilla/mux"
@@ -188,7 +201,7 @@ import (
 
 router := mux.NewRouter()
 web.Mount(router, "/crank", redis) // redis implements crank.Broker
-// Visit http://localhost:8080/crank for stats, queues, retries, dead jobs, and queue management
+// Visit http://localhost:8080/crank for dashboard, stats, retries, dead jobs, and queue management
 ```
 
 **Production:** The clear-queue endpoint is destructive. Protect the Crank UI (e.g. with auth middleware or CSRF) or expose it only on trusted networks.
@@ -249,7 +262,10 @@ _ = queue.Clear()
 
 stats, _ := crank.GetStats(broker)
 fmt.Printf("Processed: %d, Retry: %d, Dead: %d\n", stats.Processed, stats.Retry, stats.Dead)
+// stats.Queues is map[string]int64 (Redis discovers queues via queue:* keys)
 ```
+
+`GetStats` parses broker responses safely (handles `int`, `int64`, `float64`, and `map[string]int64` or `map[string]interface{}` for queues) and returns an error instead of panicking on invalid data.
 
 ### Custom broker
 
@@ -269,7 +285,7 @@ Implement these methods (job types use `*crank.Job`):
 | `GetDeadJobs(limit int64) ([]*Job, error)` | Return jobs from the dead set (for UI/inspection) |
 | `GetQueueSize(queue string) (int64, error)` | Queue length for stats/UI |
 | `DeleteKey(key string) error` | Delete a key (e.g. for queue clear; key format is `queue:{name}` for the default) |
-| `GetStats() (map[string]interface{}, error)` | Return `processed`, `retry`, `dead` (int64), and `queues` (map[string]int64) |
+| `GetStats() (map[string]interface{}, error)` | Return `processed`, `retry`, `dead` (int64), and `queues` (map of queue name → size). Consumers should parse safely; see `queue.GetStats`. |
 | `Close() error` | Release connections/resources |
 
 Example: plugging a custom broker into the client and engine:
@@ -301,7 +317,7 @@ engine, _ := crank.NewEngine(config, broker)
 | Example | Description |
 |--------|-------------|
 | `examples/simple_worker/` | Enqueues jobs; run a worker process separately to consume them. |
-| `examples/web_server/` | HTTP server that enqueues jobs and mounts the Crank Web UI. |
+| `examples/web_server/` | HTTP server that enqueues jobs and mounts the Crank Web UI (stats, queues, retries, dead, clear). |
 
 Run the simple enqueue example (then start the worker in another terminal):
 
@@ -324,9 +340,10 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for systemd, Docker, Kubernetes, and producti
 | Feature | Sidekiq (Ruby) | Crank |
 |--------|-----------------|------------|
 | Language | Ruby | Go |
-| Concurrency | Threads | Goroutines + worker pool |
+| Concurrency | Threads | Goroutines + worker pool with backpressure |
 | Broker | Redis | Broker interface (Redis default) |
 | Deployment | Ruby stack | Single Go binary |
+| Backpressure | — | Unbuffered channel; fetcher blocks when workers saturated |
 
 ## License
 
