@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/quest/crank"
+	"github.com/ogwurujohnson/crank"
 )
 
 // Demo workers (so enqueued jobs from examples/simple_worker can be processed)

@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/quest/crank/internal/broker"
-	"github.com/quest/crank/internal/config"
-	"github.com/quest/crank/internal/payload"
+	"github.com/ogwurujohnson/crank/internal/broker"
+	"github.com/ogwurujohnson/crank/internal/config"
+	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
 // Processor manages job processing with a worker pool

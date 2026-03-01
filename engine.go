@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/quest/crank/internal/broker"
-	"github.com/quest/crank/internal/config"
-	"github.com/quest/crank/internal/queue"
+	"github.com/ogwurujohnson/crank/internal/broker"
+	"github.com/ogwurujohnson/crank/internal/config"
+	"github.com/ogwurujohnson/crank/internal/queue"
 )
 
 // engineRegistry is the per-engine worker registry used by Processor.

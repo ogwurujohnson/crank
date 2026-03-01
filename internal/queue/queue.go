@@ -1,7 +1,7 @@
 package queue
 
 import (
-	"github.com/quest/crank/internal/broker"
+	"github.com/ogwurujohnson/crank/internal/broker"
 )
 
 // Queue represents a job queue

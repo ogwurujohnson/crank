@@ -6,11 +6,11 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/quest/crank/internal/broker"
-	"github.com/quest/crank/internal/config"
-	"github.com/quest/crank/internal/payload"
-	"github.com/quest/crank/internal/queue"
-	"github.com/quest/crank/pkg/sdk"
+	"github.com/ogwurujohnson/crank/internal/broker"
+	"github.com/ogwurujohnson/crank/internal/config"
+	"github.com/ogwurujohnson/crank/internal/payload"
+	"github.com/ogwurujohnson/crank/internal/queue"
+	"github.com/ogwurujohnson/crank/pkg/sdk"
 )
 
 // ----- broker -----

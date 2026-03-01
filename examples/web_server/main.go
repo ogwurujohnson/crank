@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/quest/crank"
-	"github.com/quest/crank/web"
+	"github.com/ogwurujohnson/crank"
+	"github.com/ogwurujohnson/crank/web"
 )
 
 // WebEmailWorker sends emails (for web server example)

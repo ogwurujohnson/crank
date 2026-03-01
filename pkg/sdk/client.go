@@ -3,8 +3,8 @@ package sdk
 import (
 	"fmt"
 
-	"github.com/quest/crank/internal/broker"
-	"github.com/quest/crank/internal/payload"
+	"github.com/ogwurujohnson/crank/internal/broker"
+	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
 var (

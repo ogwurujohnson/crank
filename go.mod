@@ -1,4 +1,4 @@
-module github.com/quest/crank
+module github.com/ogwurujohnson/crank
 
 go 1.21
 

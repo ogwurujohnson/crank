@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/quest/crank"
+	"github.com/ogwurujohnson/crank"
 )
 
 // EmailWorker sends emails

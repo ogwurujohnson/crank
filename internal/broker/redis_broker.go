@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/quest/crank/internal/payload"
+	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
 // RedisBrokerConfig holds Redis connection options including TLS
