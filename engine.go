@@ -46,6 +46,9 @@ type Engine struct {
 // NewEngine creates an engine with the given config and broker.
 // Register workers with engine.Register before calling Start.
 func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
+	if cfg.Logger == nil {
+		cfg.Logger = queue.NopLogger()
+	}
 	registry := &engineRegistry{workers: make(map[string]queue.Worker)}
 	processor, err := queue.NewProcessor(cfg, broker, registry)
 	if err != nil {

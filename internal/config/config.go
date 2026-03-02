@@ -8,6 +8,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Logger is compatible with slog-style logging (msg string, args ...any).
+// Used by the engine/processor; see queue.NopLogger() for a no-op default.
+type Logger interface {
+	Debug(msg string, args ...any)
+	Info(msg string, args ...any)
+	Warn(msg string, args ...any)
+	Error(msg string, args ...any)
+}
+
 // Config represents Crank configuration
 type Config struct {
 	Concurrency int           `yaml:"concurrency"`
@@ -15,6 +24,7 @@ type Config struct {
 	Timeout     int           `yaml:"timeout"`
 	Verbose     bool          `yaml:"verbose"`
 	Redis       RedisConfig   `yaml:"redis"`
+	Logger      Logger        `yaml:"-"` // optional; nil => queue.NopLogger()
 }
 
 // QueueConfig represents queue configuration.

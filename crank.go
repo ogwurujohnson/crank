@@ -59,6 +59,10 @@ type Config = config.Config
 type QueueConfig = config.QueueConfig
 type RedisConfig = config.RedisConfig
 
+// Logger is the logging interface used by the engine (slog-style: msg string, args ...any).
+// Set Config.Logger to customize; nil defaults to queue.NopLogger().
+type Logger = config.Logger
+
 var LoadConfig = config.Load
 
 // ----- queue / processor / worker / stats -----
@@ -69,8 +73,9 @@ type (
 )
 
 var (
-	NewQueue = queue.NewQueue
-	GetStats = queue.GetStats
+	NewQueue   = queue.NewQueue
+	GetStats   = queue.GetStats
+	NopLogger  = queue.NopLogger
 )
 
 // NewProcessor creates a processor using the global worker registry (RegisterWorker).
