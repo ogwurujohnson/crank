@@ -73,9 +73,9 @@ type (
 )
 
 var (
-	NewQueue   = queue.NewQueue
-	GetStats   = queue.GetStats
-	NopLogger  = queue.NopLogger
+	NewQueue  = queue.NewQueue
+	GetStats  = queue.GetStats
+	NopLogger = queue.NopLogger
 )
 
 // NewProcessor creates a processor using the global worker registry (RegisterWorker).
