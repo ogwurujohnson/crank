@@ -11,31 +11,24 @@ import (
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
-// jobMsg carries a dequeued job and its queue name to a worker.
 type jobMsg struct {
 	job   *payload.Job
 	queue string
 }
 
-// Processor manages job processing with a worker pool. Backpressure: a single
-// fetcher dequeues and sends to an unbuffered channel; N workers receive and
-// process. When all workers are busy, the fetcher blocks on send, so no new
-// jobs are pulled until a worker is free (the crank slows down).
 type Processor struct {
 	cfg         *config.Config
 	broker      broker.Broker
-	registry    WorkerRegistry // if nil, uses global GetWorker
+	registry    WorkerRegistry
 	log         Logger
 	queues      []string
-	jobCh       chan jobMsg // unbuffered: send blocks when all workers busy
+	jobCh       chan jobMsg
 	wg          sync.WaitGroup
 	ctx         context.Context
 	cancel      context.CancelFunc
 	retryTicker *time.Ticker
 }
 
-// NewProcessor creates a new processor instance. If registry is nil, the global
-// worker registry (RegisterWorker/GetWorker) is used.
 func NewProcessor(cfg *config.Config, b broker.Broker, registry WorkerRegistry) (*Processor, error) {
 	queues := make([]string, 0)
 	for _, qc := range cfg.Queues {
@@ -61,7 +54,7 @@ func NewProcessor(cfg *config.Config, b broker.Broker, registry WorkerRegistry) 
 		registry:    registry,
 		log:         log,
 		queues:      queues,
-		jobCh:       make(chan jobMsg), // unbuffered for backpressure
+		jobCh:       make(chan jobMsg),
 		ctx:         ctx,
 		cancel:      cancel,
 		retryTicker: time.NewTicker(5 * time.Second),
@@ -70,9 +63,6 @@ func NewProcessor(cfg *config.Config, b broker.Broker, registry WorkerRegistry) 
 	return p, nil
 }
 
-// Start begins processing jobs. One fetcher goroutine dequeues and sends to
-// jobCh; concurrency worker goroutines receive and process. Backpressure:
-// fetcher blocks on send when all workers are busy.
 func (p *Processor) Start() error {
 	p.log.Info("engine started", "concurrency", p.cfg.Concurrency, "queues", p.queues)
 
@@ -90,7 +80,6 @@ func (p *Processor) Start() error {
 	return nil
 }
 
-// Stop gracefully stops the processor
 func (p *Processor) Stop() {
 	p.log.Info("engine stopping")
 	p.cancel()
@@ -99,9 +88,6 @@ func (p *Processor) Stop() {
 	p.log.Info("engine stopped")
 }
 
-// fetcher dequeues jobs and sends them to jobCh. When all workers are busy,
-// the send blocks (backpressure: crank slows down). Closes jobCh on exit so
-// workers can shut down.
 func (p *Processor) fetcher() {
 	defer p.wg.Done()
 	defer close(p.jobCh)
@@ -122,7 +108,6 @@ func (p *Processor) fetcher() {
 			}
 			p.log.Debug("job fetched", "jid", job.JID, "queue", queue, "class", job.Class)
 
-			// Send blocks when all workers busy (backpressure). On shutdown, put job back.
 			select {
 			case <-p.ctx.Done():
 				_ = p.broker.Enqueue(queue, job)
@@ -133,8 +118,6 @@ func (p *Processor) fetcher() {
 	}
 }
 
-// worker receives from jobCh and processes jobs. Blocks on receive when idle,
-// so the fetcher only dequeues when a worker is free.
 func (p *Processor) worker() {
 	defer p.wg.Done()
 

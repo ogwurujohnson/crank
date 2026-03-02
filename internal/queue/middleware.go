@@ -7,27 +7,22 @@ import (
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
-// MiddlewareFunc defines a middleware function
 type MiddlewareFunc func(ctx context.Context, job *payload.Job, next func() error) error
 
-// MiddlewareChain manages middleware execution
 type MiddlewareChain struct {
 	middlewares []MiddlewareFunc
 }
 
-// NewMiddlewareChain creates a new middleware chain
 func NewMiddlewareChain() *MiddlewareChain {
 	return &MiddlewareChain{
 		middlewares: make([]MiddlewareFunc, 0),
 	}
 }
 
-// Add adds a middleware to the chain
 func (mc *MiddlewareChain) Add(middleware MiddlewareFunc) {
 	mc.middlewares = append(mc.middlewares, middleware)
 }
 
-// Execute executes the middleware chain
 func (mc *MiddlewareChain) Execute(ctx context.Context, job *payload.Job, final func() error) error {
 	if len(mc.middlewares) == 0 {
 		return final()
@@ -49,17 +44,14 @@ func (mc *MiddlewareChain) Execute(ctx context.Context, job *payload.Job, final 
 
 var globalMiddlewareChain = NewMiddlewareChain()
 
-// AddMiddleware adds middleware to the global chain
 func AddMiddleware(middleware MiddlewareFunc) {
 	globalMiddlewareChain.Add(middleware)
 }
 
-// GetMiddlewareChain returns the global middleware chain
 func GetMiddlewareChain() *MiddlewareChain {
 	return globalMiddlewareChain
 }
 
-// LoggingMiddleware logs job execution with redacted args on failure
 func LoggingMiddleware(ctx context.Context, job *payload.Job, next func() error) error {
 	err := next()
 	if err != nil {

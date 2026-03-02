@@ -47,14 +47,12 @@ func TestFromJSON_Invalid(t *testing.T) {
 
 func TestFromJSON_ValidMinimal(t *testing.T) {
 	c := qt.New(t)
-	// JSON numbers unmarshal to float64 in Go
 	data := []byte(`{"jid":"id1","class":"W","args":[1,2],"queue":"q","retry":5,"retry_count":0,"created_at":0,"enqueued_at":0,"backtrace":false}`)
 	j, err := FromJSON(data)
 	c.Assert(err, qt.IsNil)
 	c.Assert(j.JID, qt.Equals, "id1")
 	c.Assert(j.Class, qt.Equals, "W")
 	c.Assert(j.Queue, qt.Equals, "q")
-	// Args from JSON are []interface{} with float64 for numbers
 	c.Assert(len(j.Args), qt.Equals, 2)
 }
 

@@ -10,7 +10,6 @@ import (
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
-// mockBroker only implements GetStats for queue.GetStats tests.
 type mockBroker struct {
 	stats map[string]interface{}
 	err   error
@@ -61,7 +60,6 @@ func TestGetStats_Valid(t *testing.T) {
 
 func TestGetStats_IntAndFloat64(t *testing.T) {
 	c := qt.New(t)
-	// Simulate JSON unmarshaling (numbers as float64) and int
 	b := &mockBroker{
 		stats: map[string]interface{}{
 			"processed": float64(100),
@@ -95,7 +93,6 @@ func TestGetStats_MissingKey(t *testing.T) {
 	b := &mockBroker{
 		stats: map[string]interface{}{
 			"processed": int64(1),
-			// missing "retry", "dead", "queues"
 		},
 	}
 	_, err := GetStats(b)

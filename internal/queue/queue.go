@@ -6,13 +6,11 @@ import (
 	"github.com/ogwurujohnson/crank/internal/broker"
 )
 
-// Queue represents a job queue
 type Queue struct {
 	name   string
 	broker broker.Broker
 }
 
-// NewQueue creates a new queue instance
 func NewQueue(name string, b broker.Broker) *Queue {
 	return &Queue{
 		name:   name,
@@ -20,22 +18,18 @@ func NewQueue(name string, b broker.Broker) *Queue {
 	}
 }
 
-// Size returns the current size of the queue
 func (q *Queue) Size() (int64, error) {
 	return q.broker.GetQueueSize(q.name)
 }
 
-// Name returns the queue name
 func (q *Queue) Name() string {
 	return q.name
 }
 
-// Clear clears all jobs from the queue
 func (q *Queue) Clear() error {
 	return q.broker.DeleteKey("queue:" + q.name)
 }
 
-// Stats provides queue statistics
 type Stats struct {
 	Processed int64            `json:"processed"`
 	Retry     int64            `json:"retry"`
@@ -43,7 +37,6 @@ type Stats struct {
 	Queues    map[string]int64 `json:"queues"`
 }
 
-// getInt64 extracts int64 from broker stats map (handles int, int64, float64 from JSON).
 func getInt64(m map[string]interface{}, key string) (int64, error) {
 	v, ok := m[key]
 	if !ok || v == nil {
@@ -61,14 +54,11 @@ func getInt64(m map[string]interface{}, key string) (int64, error) {
 	}
 }
 
-// getQueuesMap extracts map[string]int64 from broker stats. Handles both
-// map[string]interface{} (e.g. from JSON) and map[string]int64 (from Redis broker).
 func getQueuesMap(m map[string]interface{}, key string) (map[string]int64, error) {
 	v, ok := m[key]
 	if !ok || v == nil {
 		return nil, fmt.Errorf("stats: missing or nil %q", key)
 	}
-	// Direct map[string]int64 (e.g. Redis broker)
 	if q, ok := v.(map[string]int64); ok {
 		out := make(map[string]int64, len(q))
 		for k, n := range q {
@@ -76,7 +66,6 @@ func getQueuesMap(m map[string]interface{}, key string) (map[string]int64, error
 		}
 		return out, nil
 	}
-	// map[string]interface{} (e.g. from JSON or custom broker)
 	raw, ok := v.(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("stats: %q is not a map", key)
@@ -101,8 +90,6 @@ func getQueuesMap(m map[string]interface{}, key string) (map[string]int64, error
 	return out, nil
 }
 
-// GetStats returns current statistics. Parses broker response safely; returns an error
-// if the broker returns missing or invalid types instead of panicking.
 func GetStats(b broker.Broker) (*Stats, error) {
 	statsMap, err := b.GetStats()
 	if err != nil {

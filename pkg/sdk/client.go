@@ -11,27 +11,22 @@ var (
 	globalClient *Client
 )
 
-// Client is the thin client for enqueueing jobs to the broker
 type Client struct {
 	broker broker.Broker
 }
 
-// NewClient creates a new Crank client
 func NewClient(b broker.Broker) *Client {
 	return &Client{broker: b}
 }
 
-// SetGlobalClient sets the global client instance
 func SetGlobalClient(c *Client) {
 	globalClient = c
 }
 
-// GetGlobalClient returns the global client instance
 func GetGlobalClient() *Client {
 	return globalClient
 }
 
-// Enqueue enqueues a job to the specified queue
 func (c *Client) Enqueue(workerClass string, queue string, args ...interface{}) (string, error) {
 	job := payload.NewJob(workerClass, queue, args...)
 	if err := c.broker.Enqueue(queue, job); err != nil {
@@ -40,7 +35,6 @@ func (c *Client) Enqueue(workerClass string, queue string, args ...interface{}) 
 	return job.JID, nil
 }
 
-// EnqueueWithOptions enqueues a job with custom options
 func (c *Client) EnqueueWithOptions(workerClass string, queue string, options *payload.JobOptions, args ...interface{}) (string, error) {
 	job := payload.NewJob(workerClass, queue, args...)
 
@@ -59,7 +53,6 @@ func (c *Client) EnqueueWithOptions(workerClass string, queue string, options *p
 	return job.JID, nil
 }
 
-// EnqueueGlobal is a convenience that uses the global client
 func EnqueueGlobal(workerClass string, queue string, args ...interface{}) (string, error) {
 	if globalClient == nil {
 		return "", fmt.Errorf("global client not initialized. Call SetGlobalClient first")
@@ -67,7 +60,6 @@ func EnqueueGlobal(workerClass string, queue string, args ...interface{}) (strin
 	return globalClient.Enqueue(workerClass, queue, args...)
 }
 
-// EnqueueWithOptionsGlobal is a convenience that uses the global client
 func EnqueueWithOptionsGlobal(workerClass string, queue string, options *payload.JobOptions, args ...interface{}) (string, error) {
 	if globalClient == nil {
 		return "", fmt.Errorf("global client not initialized. Call SetGlobalClient first")

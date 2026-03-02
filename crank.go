@@ -1,5 +1,4 @@
-// Package crank provides a background job queue for Go.
-// All public API is re-exported from internal packages.
+// Package crank is a background job queue for Go.
 package crank
 
 import (
@@ -13,16 +12,7 @@ import (
 	"github.com/ogwurujohnson/crank/pkg/sdk"
 )
 
-// ----- broker -----
-
-// Broker is the storage abstraction for job queues. The library uses it for
-// enqueue, dequeue, retries, and dead jobs. Implement this interface to use
-// a custom backend (e.g. PostgreSQL, NATS, or an in-memory store) instead of Redis.
-// All public APIs (NewClient, NewEngine, NewQueue, GetStats, web.Mount) accept
-// any Broker implementation.
 type Broker = broker.Broker
-
-// RedisClient is the built-in Redis implementation of Broker.
 type RedisClient = broker.RedisBroker
 type RedisBrokerConfig = broker.RedisBrokerConfig
 
@@ -34,7 +24,6 @@ func NewRedisClientWithConfig(cfg RedisBrokerConfig) (*RedisClient, error) {
 	return broker.NewRedisBrokerWithConfig(cfg)
 }
 
-// ----- payload / job -----
 type Job = payload.Job
 type JobOptions = payload.JobOptions
 
@@ -43,7 +32,6 @@ var (
 	FromJSON = payload.FromJSON
 )
 
-// ----- client (sdk) -----
 type Client = sdk.Client
 
 var (
@@ -54,18 +42,13 @@ var (
 	EnqueueWithOptions = sdk.EnqueueWithOptionsGlobal
 )
 
-// ----- config -----
 type Config = config.Config
 type QueueConfig = config.QueueConfig
 type RedisConfig = config.RedisConfig
-
-// Logger is the logging interface used by the engine (slog-style: msg string, args ...any).
-// Set Config.Logger to customize; nil defaults to queue.NopLogger().
 type Logger = config.Logger
 
 var LoadConfig = config.Load
 
-// ----- queue / processor / worker / stats -----
 type (
 	Processor = queue.Processor
 	Queue     = queue.Queue
@@ -78,13 +61,10 @@ var (
 	NopLogger = queue.NopLogger
 )
 
-// NewProcessor creates a processor using the global worker registry (RegisterWorker).
-// For per-engine registration, use NewEngine and engine.Register instead.
 func NewProcessor(cfg *Config, b Broker) (*Processor, error) {
 	return queue.NewProcessor(cfg, b, nil)
 }
 
-// ----- worker -----
 type Worker = queue.Worker
 
 var (
@@ -93,7 +73,6 @@ var (
 	ListWorkers    = queue.ListWorkers
 )
 
-// ----- middleware -----
 type MiddlewareFunc = queue.MiddlewareFunc
 type MiddlewareChain = queue.MiddlewareChain
 
@@ -104,7 +83,6 @@ var (
 	LoggingMiddleware  = queue.LoggingMiddleware
 )
 
-// ----- redactor -----
 type Redactor = payload.Redactor
 
 var (
@@ -118,7 +96,6 @@ func NewFieldMaskingRedactor(keys []string) *payload.FieldMaskingRedactor {
 	return &payload.FieldMaskingRedactor{Keys: keys}
 }
 
-// ----- validator -----
 type Validator = payload.Validator
 type ChainValidator = payload.ChainValidator
 

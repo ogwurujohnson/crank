@@ -6,8 +6,6 @@ import (
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
-// Broker defines the storage abstraction for job queues.
-// Implementations can use Redis, PostgreSQL, NATS, or other backends.
 type Broker interface {
 	Enqueue(queue string, job *payload.Job) error
 	Dequeue(queues []string, timeout time.Duration) (*payload.Job, string, error)
