@@ -9,8 +9,6 @@ import (
 	"github.com/ogwurujohnson/crank"
 )
 
-// Mount mounts the Crank web UI on the given router. The broker b is passed into
-// all handlers via closure so multiple Mount calls use the correct broker.
 func Mount(router *mux.Router, path string, b crank.Broker) {
 	subrouter := router.PathPrefix(path).Subrouter()
 
@@ -18,12 +16,10 @@ func Mount(router *mux.Router, path string, b crank.Broker) {
 	subrouter.HandleFunc("/", indexHandler).Methods("GET")
 	subrouter.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) { statsHandler(w, r, b) }).Methods("GET")
 	subrouter.HandleFunc("/queues", func(w http.ResponseWriter, r *http.Request) { queuesHandler(w, r, b) }).Methods("GET")
-	//todo: Clear-queue is destructive; protect with auth/CSRF in production (e.g. middleware).
 	subrouter.HandleFunc("/queues/{queue}/clear", func(w http.ResponseWriter, r *http.Request) { clearQueueHandler(w, r, b) }).Methods("POST")
 	subrouter.HandleFunc("/retries", func(w http.ResponseWriter, r *http.Request) { retriesHandler(w, r, b) }).Methods("GET")
 	subrouter.HandleFunc("/dead", func(w http.ResponseWriter, r *http.Request) { deadHandler(w, r, b) }).Methods("GET")
 
-	// Serve static assets
 	subrouter.PathPrefix("/static/").Handler(http.StripPrefix(path+"/static/", http.FileServer(http.Dir("web/static/"))))
 }
 

@@ -9,6 +9,7 @@ A sidekiq motivated high-performance background job processor for Go. Uses a bro
 - **Redis-backed queue** — Weighted queues, automatic retries with exponential backoff, dead job set; stats discover all queues via `queue:*` keys
 - **Web UI** — Stats, queue sizes, retry and dead job listing (JSON), and clear-queue; broker passed per mount (no global state)
 - **Middleware** — Chain hooks around job execution (logging, metrics, redaction)
+- **Structured logging** — Optional `Logger` interface (slog-style: `Debug`, `Info`, `Warn`, `Error`); engine logs start/stop, job fetched, success/failure with job ID and error. Nil defaults to no-op; no third-party log dependency in the core SDK.
 - **Security** — Optional payload validation, argument redaction for logs, TLS for Redis; protect clear-queue in production (auth/CSRF)
 - **YAML configuration** — Queues (name + weight), concurrency, timeouts, Redis URL and TLS options
 - **Production-ready** — Graceful shutdown (SIGTERM/SIGINT), job timeouts, DLQ, safe stats parsing (no panics on broker response)
@@ -151,18 +152,20 @@ redis:
 - `timeout`: Job execution timeout in seconds.
 - `redis.url`: Overridable by `REDIS_URL`. Use `rediss://` or set `use_tls: true` for TLS.
 
+**Logging:** Set `Config.Logger` to a value implementing `crank.Logger` (methods: `Debug`, `Info`, `Warn`, `Error` with `msg string, args ...any`). If nil, the engine uses a no-op logger. Use `crank.NopLogger()` explicitly or plug in stdlib `log/slog` via a small adapter (see below).
+
 **Config without a file:**
 
 ```go
 config := &crank.Config{
 	Concurrency: 10,
 	Timeout:     8,
-	Verbose:    true,
-	Queues:     []crank.QueueConfig{{Name: "default", Weight: 1}},
+	Queues:      []crank.QueueConfig{{Name: "default", Weight: 1}},
 	Redis: crank.RedisConfig{
-		URL:             os.Getenv("REDIS_URL"),
-		NetworkTimeout:  5,
+		URL:            os.Getenv("REDIS_URL"),
+		NetworkTimeout: 5,
 	},
+	Logger: crank.NopLogger(), // or your slog adapter; nil => no-op
 }
 engine, _ := crank.NewEngine(config, broker)
 ```
@@ -225,6 +228,26 @@ defer engine.Stop()
 
 // Your HTTP server or other work here
 ```
+
+### Structured logging (engine)
+
+The engine logs start/stop, job fetched, and job success/failure (with job ID and error) via `Config.Logger`. If nil, it uses a no-op logger. Use stdlib `log/slog` with a thin adapter:
+
+```go
+import "log/slog"
+
+type slogAdapter struct{ *slog.Logger }
+
+func (a slogAdapter) Debug(msg string, args ...any) { a.Logger.Debug(msg, args...) }
+func (a slogAdapter) Info(msg string, args ...any)  { a.Logger.Info(msg, args...) }
+func (a slogAdapter) Warn(msg string, args ...any)  { a.Logger.Warn(msg, args...) }
+func (a slogAdapter) Error(msg string, args ...any) { a.Logger.Error(msg, args...) }
+
+config := &crank.Config{ /* ... */ Logger: slogAdapter{Logger: slog.Default()} }
+engine, _ := crank.NewEngine(config, broker)
+```
+
+To disable engine logging, set `config.Logger = crank.NopLogger()` or leave it nil.
 
 ### Middleware and logging with redaction
 

@@ -12,7 +12,6 @@ import (
 	"github.com/ogwurujohnson/crank"
 )
 
-// Demo workers (so enqueued jobs from examples/simple_worker can be processed)
 type emailWorker struct{}
 
 func (emailWorker) Perform(ctx context.Context, args ...interface{}) error {

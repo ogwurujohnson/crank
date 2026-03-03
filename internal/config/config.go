@@ -8,26 +8,29 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents Crank configuration
+type Logger interface {
+	Debug(msg string, args ...any)
+	Info(msg string, args ...any)
+	Warn(msg string, args ...any)
+	Error(msg string, args ...any)
+}
+
 type Config struct {
 	Concurrency int           `yaml:"concurrency"`
 	Queues      []QueueConfig `yaml:"queues"`
 	Timeout     int           `yaml:"timeout"`
 	Verbose     bool          `yaml:"verbose"`
 	Redis       RedisConfig   `yaml:"redis"`
+	Logger      Logger        `yaml:"-"`
 }
 
-// QueueConfig represents queue configuration.
-// Can be parsed as [name, weight] array or {name: name, weight: weight} map.
-// Weight controls polling share (higher = more workers poll this queue). Priority is
-// parsed from YAML but not yet used by the processor (reserved for future ordering).
+// QueueConfig: YAML accepts [name, weight] or {name, weight, priority}. Priority reserved.
 type QueueConfig struct {
 	Name     string `yaml:"name"`
 	Weight   int    `yaml:"weight"`
 	Priority int    `yaml:"priority"`
 }
 
-// UnmarshalYAML implements custom YAML unmarshaling for queue config
 func (qc *QueueConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	var arr []interface{}
 	if err := unmarshal(&arr); err == nil && len(arr) >= 1 {
@@ -70,7 +73,6 @@ func (qc *QueueConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
-// RedisConfig represents Redis connection configuration
 type RedisConfig struct {
 	URL                   string `yaml:"url"`
 	NetworkTimeout        int    `yaml:"network_timeout"`
@@ -78,7 +80,6 @@ type RedisConfig struct {
 	TLSInsecureSkipVerify bool   `yaml:"tls_insecure_skip_verify"`
 }
 
-// Load loads configuration from a YAML file
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -109,12 +110,10 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// GetTimeout returns timeout as duration
 func (c *Config) GetTimeout() time.Duration {
 	return time.Duration(c.Timeout) * time.Second
 }
 
-// GetNetworkTimeout returns network timeout as duration
 func (c *RedisConfig) GetNetworkTimeout() time.Duration {
 	return time.Duration(c.NetworkTimeout) * time.Second
 }

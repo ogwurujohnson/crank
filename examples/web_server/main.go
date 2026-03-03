@@ -12,7 +12,6 @@ import (
 	"github.com/ogwurujohnson/crank/web"
 )
 
-// WebEmailWorker sends emails (for web server example)
 type WebEmailWorker struct{}
 
 func (w *WebEmailWorker) Perform(ctx context.Context, args ...interface{}) error {
@@ -32,25 +31,19 @@ func (w *WebEmailWorker) Perform(ctx context.Context, args ...interface{}) error
 }
 
 func main() {
-	// Connect to Redis
 	redis, err := crank.NewRedisClient("redis://localhost:6379/0", 5*time.Second)
 	if err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
 	defer redis.Close()
 
-	// Initialize client
 	client := crank.NewClient(redis)
 	crank.SetGlobalClient(client)
-
-	// Register workers
 	crank.RegisterWorker("WebEmailWorker", &WebEmailWorker{})
 
-	// Setup HTTP server with Crank Web UI
 	router := mux.NewRouter()
 	web.Mount(router, "/crank", redis)
 
-	// API endpoint to enqueue jobs
 	router.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 		userID := r.URL.Query().Get("user_id")
 		if userID == "" {

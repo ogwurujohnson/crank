@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
+	qt "github.com/frankban/quicktest"
 	"github.com/ogwurujohnson/crank/internal/broker"
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
-// mockBroker only implements GetStats for queue.GetStats tests.
 type mockBroker struct {
 	stats map[string]interface{}
 	err   error
@@ -22,23 +22,24 @@ func (m *mockBroker) GetStats() (map[string]interface{}, error) {
 	return m.stats, nil
 }
 
-func (m *mockBroker) Enqueue(string, *payload.Job) error              { return nil }
+func (m *mockBroker) Enqueue(string, *payload.Job) error { return nil }
 func (m *mockBroker) Dequeue([]string, time.Duration) (*payload.Job, string, error) {
 	return nil, "", nil
 }
-func (m *mockBroker) Ack(*payload.Job) error                            { return nil }
-func (m *mockBroker) AddToRetry(*payload.Job, time.Time) error           { return nil }
-func (m *mockBroker) GetRetryJobs(int64) ([]*payload.Job, error)        { return nil, nil }
-func (m *mockBroker) RemoveFromRetry(*payload.Job) error                 { return nil }
-func (m *mockBroker) AddToDead(*payload.Job) error                       { return nil }
-func (m *mockBroker) GetDeadJobs(int64) ([]*payload.Job, error)         { return nil, nil }
-func (m *mockBroker) GetQueueSize(string) (int64, error)                { return 0, nil }
-func (m *mockBroker) DeleteKey(string) error                            { return nil }
-func (m *mockBroker) Close() error                                      { return nil }
+func (m *mockBroker) Ack(*payload.Job) error                     { return nil }
+func (m *mockBroker) AddToRetry(*payload.Job, time.Time) error   { return nil }
+func (m *mockBroker) GetRetryJobs(int64) ([]*payload.Job, error) { return nil, nil }
+func (m *mockBroker) RemoveFromRetry(*payload.Job) error         { return nil }
+func (m *mockBroker) AddToDead(*payload.Job) error               { return nil }
+func (m *mockBroker) GetDeadJobs(int64) ([]*payload.Job, error)  { return nil, nil }
+func (m *mockBroker) GetQueueSize(string) (int64, error)         { return 0, nil }
+func (m *mockBroker) DeleteKey(string) error                     { return nil }
+func (m *mockBroker) Close() error                               { return nil }
 
 var _ broker.Broker = (*mockBroker)(nil)
 
 func TestGetStats_Valid(t *testing.T) {
+	c := qt.New(t)
 	b := &mockBroker{
 		stats: map[string]interface{}{
 			"processed": int64(10),
@@ -48,19 +49,17 @@ func TestGetStats_Valid(t *testing.T) {
 		},
 	}
 	stats, err := GetStats(b)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stats.Processed != 10 || stats.Retry != 1 || stats.Dead != 0 {
-		t.Errorf("got %+v", stats)
-	}
-	if stats.Queues["default"] != 5 || stats.Queues["low"] != 2 {
-		t.Errorf("queues: %v", stats.Queues)
-	}
+	c.Assert(err, qt.IsNil)
+	c.Assert(stats, qt.DeepEquals, &Stats{
+		Processed: 10,
+		Retry:     1,
+		Dead:      0,
+		Queues:    map[string]int64{"default": 5, "low": 2},
+	})
 }
 
 func TestGetStats_IntAndFloat64(t *testing.T) {
-	// Simulate JSON unmarshaling (numbers as float64) and int
+	c := qt.New(t)
 	b := &mockBroker{
 		stats: map[string]interface{}{
 			"processed": float64(100),
@@ -73,42 +72,35 @@ func TestGetStats_IntAndFloat64(t *testing.T) {
 		},
 	}
 	stats, err := GetStats(b)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stats.Processed != 100 || stats.Retry != 2 || stats.Dead != 1 {
-		t.Errorf("got %+v", stats)
-	}
-	if stats.Queues["default"] != 3 || stats.Queues["low"] != 1 {
-		t.Errorf("queues: %v", stats.Queues)
-	}
+	c.Assert(err, qt.IsNil)
+	c.Assert(stats, qt.DeepEquals, &Stats{
+		Processed: 100,
+		Retry:     2,
+		Dead:      1,
+		Queues:    map[string]int64{"default": 3, "low": 1},
+	})
 }
 
 func TestGetStats_BrokerError(t *testing.T) {
+	c := qt.New(t)
 	b := &mockBroker{err: errors.New("broker down")}
 	_, err := GetStats(b)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if err.Error() != "broker down" {
-		t.Errorf("got %v", err)
-	}
+	c.Assert(err, qt.ErrorMatches, "broker down")
 }
 
 func TestGetStats_MissingKey(t *testing.T) {
+	c := qt.New(t)
 	b := &mockBroker{
 		stats: map[string]interface{}{
 			"processed": int64(1),
-			// missing "retry", "dead", "queues"
 		},
 	}
 	_, err := GetStats(b)
-	if err == nil {
-		t.Fatal("expected error for missing key")
-	}
+	c.Assert(err, qt.ErrorMatches, `stats: missing or nil "retry"`)
 }
 
 func TestGetStats_InvalidType(t *testing.T) {
+	c := qt.New(t)
 	b := &mockBroker{
 		stats: map[string]interface{}{
 			"processed": int64(1),
@@ -118,12 +110,11 @@ func TestGetStats_InvalidType(t *testing.T) {
 		},
 	}
 	_, err := GetStats(b)
-	if err == nil {
-		t.Fatal("expected error for invalid queues type")
-	}
+	c.Assert(err, qt.ErrorMatches, `stats: "queues" is not a map`)
 }
 
 func TestGetStats_NilValue(t *testing.T) {
+	c := qt.New(t)
 	b := &mockBroker{
 		stats: map[string]interface{}{
 			"processed": nil,
@@ -133,7 +124,5 @@ func TestGetStats_NilValue(t *testing.T) {
 		},
 	}
 	_, err := GetStats(b)
-	if err == nil {
-		t.Fatal("expected error for nil processed")
-	}
+	c.Assert(err, qt.ErrorMatches, `stats: missing or nil "processed"`)
 }

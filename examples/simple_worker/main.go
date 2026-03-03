@@ -9,7 +9,6 @@ import (
 	"github.com/ogwurujohnson/crank"
 )
 
-// EmailWorker sends emails
 type EmailWorker struct{}
 
 func (w *EmailWorker) Perform(ctx context.Context, args ...interface{}) error {
@@ -28,7 +27,6 @@ func (w *EmailWorker) Perform(ctx context.Context, args ...interface{}) error {
 	return nil
 }
 
-// ReportWorker generates reports
 type ReportWorker struct{}
 
 func (w *ReportWorker) Perform(ctx context.Context, args ...interface{}) error {
@@ -48,22 +46,17 @@ func (w *ReportWorker) Perform(ctx context.Context, args ...interface{}) error {
 }
 
 func main() {
-	// Connect to Redis
 	redis, err := crank.NewRedisClient("redis://localhost:6379/0", 5*time.Second)
 	if err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
 	defer redis.Close()
 
-	// Initialize client
 	client := crank.NewClient(redis)
 	crank.SetGlobalClient(client)
-
-	// Register workers
 	crank.RegisterWorker("EmailWorker", &EmailWorker{})
 	crank.RegisterWorker("ReportWorker", &ReportWorker{})
 
-	// Enqueue some jobs
 	fmt.Println("Enqueueing jobs...")
 
 	jid1, err := crank.Enqueue("EmailWorker", "default", 123)

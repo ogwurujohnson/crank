@@ -11,7 +11,6 @@ import (
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
-// RedisBrokerConfig holds Redis connection options including TLS
 type RedisBrokerConfig struct {
 	URL                   string
 	Timeout               time.Duration
@@ -19,13 +18,11 @@ type RedisBrokerConfig struct {
 	TLSInsecureSkipVerify bool
 }
 
-// RedisBroker implements Broker using Redis
 type RedisBroker struct {
 	client *redis.Client
 	ctx    context.Context
 }
 
-// NewRedisBroker creates a new Redis broker
 func NewRedisBroker(redisURL string, timeout time.Duration) (*RedisBroker, error) {
 	return NewRedisBrokerWithConfig(RedisBrokerConfig{
 		URL:     redisURL,
@@ -33,8 +30,6 @@ func NewRedisBroker(redisURL string, timeout time.Duration) (*RedisBroker, error
 	})
 }
 
-// NewRedisBrokerWithConfig creates a Redis broker with TLS and hardening options.
-// It returns an error if the URL is invalid or if Redis is not available (connection verified with Ping).
 func NewRedisBrokerWithConfig(cfg RedisBrokerConfig) (*RedisBroker, error) {
 	u := strings.TrimSpace(cfg.URL)
 	if u == "" {
@@ -75,12 +70,10 @@ func NewRedisBrokerWithConfig(cfg RedisBrokerConfig) (*RedisBroker, error) {
 	}, nil
 }
 
-// Close closes the Redis connection
 func (r *RedisBroker) Close() error {
 	return r.client.Close()
 }
 
-// Enqueue adds a job to the queue
 func (r *RedisBroker) Enqueue(queue string, job *payload.Job) error {
 	data, err := job.ToJSON()
 	if err != nil {
@@ -100,12 +93,10 @@ func (r *RedisBroker) Enqueue(queue string, job *payload.Job) error {
 	return nil
 }
 
-// Ack is a no-op for Redis since BRPOP is atomic
 func (r *RedisBroker) Ack(job *payload.Job) error {
 	return nil
 }
 
-// Dequeue removes and returns a job from the queue
 func (r *RedisBroker) Dequeue(queues []string, timeout time.Duration) (*payload.Job, string, error) {
 	queueKeys := make([]string, len(queues))
 	for i, q := range queues {
@@ -133,7 +124,6 @@ func (r *RedisBroker) Dequeue(queues []string, timeout time.Duration) (*payload.
 	return job, queueName, nil
 }
 
-// AddToRetry adds a job to the retry set
 func (r *RedisBroker) AddToRetry(job *payload.Job, retryAt time.Time) error {
 	data, err := job.ToJSON()
 	if err != nil {
@@ -146,7 +136,6 @@ func (r *RedisBroker) AddToRetry(job *payload.Job, retryAt time.Time) error {
 	}).Err()
 }
 
-// GetRetryJobs returns jobs ready to be retried
 func (r *RedisBroker) GetRetryJobs(limit int64) ([]*payload.Job, error) {
 	now := float64(time.Now().Unix())
 	result, err := r.client.ZRangeByScore(r.ctx, "retry", &redis.ZRangeBy{
@@ -169,7 +158,6 @@ func (r *RedisBroker) GetRetryJobs(limit int64) ([]*payload.Job, error) {
 	return jobs, nil
 }
 
-// RemoveFromRetry removes a job from the retry set
 func (r *RedisBroker) RemoveFromRetry(job *payload.Job) error {
 	data, err := job.ToJSON()
 	if err != nil {
@@ -178,7 +166,6 @@ func (r *RedisBroker) RemoveFromRetry(job *payload.Job) error {
 	return r.client.ZRem(r.ctx, "retry", data).Err()
 }
 
-// AddToDead adds a job to the dead set
 func (r *RedisBroker) AddToDead(job *payload.Job) error {
 	data, err := job.ToJSON()
 	if err != nil {
@@ -191,7 +178,6 @@ func (r *RedisBroker) AddToDead(job *payload.Job) error {
 	}).Err()
 }
 
-// GetDeadJobs returns up to limit jobs from the dead set (most recent first by score).
 func (r *RedisBroker) GetDeadJobs(limit int64) ([]*payload.Job, error) {
 	result, err := r.client.ZRevRange(r.ctx, "dead", 0, limit-1).Result()
 	if err != nil {
@@ -208,18 +194,14 @@ func (r *RedisBroker) GetDeadJobs(limit int64) ([]*payload.Job, error) {
 	return jobs, nil
 }
 
-// GetQueueSize returns the size of a queue
 func (r *RedisBroker) GetQueueSize(queue string) (int64, error) {
 	return r.client.LLen(r.ctx, "queue:"+queue).Result()
 }
 
-// DeleteKey deletes a key from Redis
 func (r *RedisBroker) DeleteKey(key string) error {
 	return r.client.Del(r.ctx, key).Err()
 }
 
-// GetStats returns queue statistics. Queue names are discovered via KEYS queue:*
-// so all queues that have ever been used are included in the queues map.
 func (r *RedisBroker) GetStats() (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 

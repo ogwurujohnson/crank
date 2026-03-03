@@ -3,7 +3,6 @@ package queue
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -12,31 +11,24 @@ import (
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
-// jobMsg carries a dequeued job and its queue name to a worker.
 type jobMsg struct {
 	job   *payload.Job
 	queue string
 }
 
-// Processor manages job processing with a worker pool. Backpressure: a single
-// fetcher dequeues and sends to an unbuffered channel; N workers receive and
-// process. When all workers are busy, the fetcher blocks on send, so no new
-// jobs are pulled until a worker is free (the crank slows down).
 type Processor struct {
 	cfg         *config.Config
 	broker      broker.Broker
-	registry    WorkerRegistry // if nil, uses global GetWorker
+	registry    WorkerRegistry
+	log         Logger
 	queues      []string
-	jobCh       chan jobMsg // unbuffered: send blocks when all workers busy
+	jobCh       chan jobMsg
 	wg          sync.WaitGroup
 	ctx         context.Context
 	cancel      context.CancelFunc
 	retryTicker *time.Ticker
-	verbose     bool
 }
 
-// NewProcessor creates a new processor instance. If registry is nil, the global
-// worker registry (RegisterWorker/GetWorker) is used.
 func NewProcessor(cfg *config.Config, b broker.Broker, registry WorkerRegistry) (*Processor, error) {
 	queues := make([]string, 0)
 	for _, qc := range cfg.Queues {
@@ -51,28 +43,28 @@ func NewProcessor(cfg *config.Config, b broker.Broker, registry WorkerRegistry) 
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	log := cfg.Logger
+	if log == nil {
+		log = NopLogger()
+	}
+
 	p := &Processor{
 		cfg:         cfg,
 		broker:      b,
 		registry:    registry,
+		log:         log,
 		queues:      queues,
-		jobCh:       make(chan jobMsg), // unbuffered for backpressure
+		jobCh:       make(chan jobMsg),
 		ctx:         ctx,
 		cancel:      cancel,
 		retryTicker: time.NewTicker(5 * time.Second),
-		verbose:     cfg.Verbose,
 	}
 
 	return p, nil
 }
 
-// Start begins processing jobs. One fetcher goroutine dequeues and sends to
-// jobCh; concurrency worker goroutines receive and process. Backpressure:
-// fetcher blocks on send when all workers are busy.
 func (p *Processor) Start() error {
-	if p.verbose {
-		log.Printf("Starting Crank processor with concurrency=%d, queues=%v", p.cfg.Concurrency, p.queues)
-	}
+	p.log.Info("engine started", "concurrency", p.cfg.Concurrency, "queues", p.queues)
 
 	p.wg.Add(1)
 	go p.fetcher()
@@ -88,24 +80,14 @@ func (p *Processor) Start() error {
 	return nil
 }
 
-// Stop gracefully stops the processor
 func (p *Processor) Stop() {
-	if p.verbose {
-		log.Println("Stopping Crank processor...")
-	}
-
+	p.log.Info("engine stopping")
 	p.cancel()
 	p.retryTicker.Stop()
 	p.wg.Wait()
-
-	if p.verbose {
-		log.Println("Crank processor stopped")
-	}
+	p.log.Info("engine stopped")
 }
 
-// fetcher dequeues jobs and sends them to jobCh. When all workers are busy,
-// the send blocks (backpressure: crank slows down). Closes jobCh on exit so
-// workers can shut down.
 func (p *Processor) fetcher() {
 	defer p.wg.Done()
 	defer close(p.jobCh)
@@ -118,16 +100,14 @@ func (p *Processor) fetcher() {
 		default:
 			job, queue, err := p.broker.Dequeue(p.queues, dequeueTimeout)
 			if err != nil {
-				if p.verbose {
-					log.Printf("Error dequeuing job: %v", err)
-				}
+				p.log.Warn("dequeue failed", "err", err)
 				continue
 			}
 			if job == nil {
 				continue
 			}
+			p.log.Debug("job fetched", "jid", job.JID, "queue", queue, "class", job.Class)
 
-			// Send blocks when all workers busy (backpressure). On shutdown, put job back.
 			select {
 			case <-p.ctx.Done():
 				_ = p.broker.Enqueue(queue, job)
@@ -138,8 +118,6 @@ func (p *Processor) fetcher() {
 	}
 }
 
-// worker receives from jobCh and processes jobs. Blocks on receive when idle,
-// so the fetcher only dequeues when a worker is free.
 func (p *Processor) worker() {
 	defer p.wg.Done()
 
@@ -161,13 +139,9 @@ func (p *Processor) processJob(job *payload.Job, queue string) {
 	ctx, cancel := context.WithTimeout(context.Background(), p.cfg.GetTimeout())
 	defer cancel()
 
-	if p.verbose {
-		log.Printf("Processing %s", job)
-	}
-
 	if v := payload.GetDefaultValidator(); v != nil {
 		if err := v.Validate(job); err != nil {
-			log.Printf("Job %s failed validation: %v", job.JID, err)
+			p.log.Error("job failed validation", "jid", job.JID, "err", err)
 			p.handleFailure(job, err)
 			return
 		}
@@ -181,7 +155,7 @@ func (p *Processor) processJob(job *payload.Job, queue string) {
 		worker, err = GetWorker(job.Class)
 	}
 	if err != nil {
-		log.Printf("Error getting worker '%s': %v", job.Class, err)
+		p.log.Error("worker not found", "jid", job.JID, "class", job.Class, "err", err)
 		p.handleFailure(job, fmt.Errorf("worker not found: %w", err))
 		return
 	}
@@ -193,14 +167,10 @@ func (p *Processor) processJob(job *payload.Job, queue string) {
 	duration := time.Since(start)
 
 	if err != nil {
-		if p.verbose {
-			log.Printf("Job %s failed: %v (took %v)", job.JID, err, duration)
-		}
+		p.log.Error("job failed", "jid", job.JID, "err", err, "duration", duration)
 		p.handleFailure(job, err)
 	} else {
-		if p.verbose {
-			log.Printf("Job %s completed successfully (took %v)", job.JID, duration)
-		}
+		p.log.Info("job succeeded", "jid", job.JID, "duration", duration)
 	}
 }
 
@@ -210,21 +180,16 @@ func (p *Processor) handleFailure(job *payload.Job, err error) {
 	if job.RetryCount <= job.Retry {
 		backoff := time.Duration(1<<uint(job.RetryCount)) * time.Second
 		retryAt := time.Now().Add(backoff)
-
-		if p.verbose {
-			log.Printf("Scheduling retry for job %s (attempt %d/%d) at %v", job.JID, job.RetryCount, job.Retry, retryAt)
-		}
+		p.log.Debug("scheduling retry", "jid", job.JID, "attempt", job.RetryCount, "max", job.Retry, "retryAt", retryAt)
 
 		if err := p.broker.AddToRetry(job, retryAt); err != nil {
-			log.Printf("Error adding job to retry: %v", err)
+			p.log.Warn("add to retry failed", "jid", job.JID, "err", err)
 		}
 	} else {
-		if p.verbose {
-			log.Printf("Job %s exceeded max retries, moving to dead queue", job.JID)
-		}
+		p.log.Warn("job exceeded max retries, moving to dead queue", "jid", job.JID)
 
 		if err := p.broker.AddToDead(job); err != nil {
-			log.Printf("Error adding job to dead queue: %v", err)
+			p.log.Warn("add to dead failed", "jid", job.JID, "err", err)
 		}
 	}
 }
@@ -245,27 +210,21 @@ func (p *Processor) retryProcessor() {
 func (p *Processor) processRetries() {
 	jobs, err := p.broker.GetRetryJobs(100)
 	if err != nil {
-		if p.verbose {
-			log.Printf("Error getting retry jobs: %v", err)
-		}
+		p.log.Warn("get retry jobs failed", "err", err)
 		return
 	}
 
 	for _, job := range jobs {
 		if err := p.broker.RemoveFromRetry(job); err != nil {
-			if p.verbose {
-				log.Printf("Error removing job from retry: %v", err)
-			}
+			p.log.Warn("remove from retry failed", "jid", job.JID, "err", err)
 			continue
 		}
 
 		if err := p.broker.Enqueue(job.Queue, job); err != nil {
-			if p.verbose {
-				log.Printf("Error re-enqueueing retry job: %v", err)
-			}
+			p.log.Warn("re-enqueue retry failed", "jid", job.JID, "err", err)
 			p.broker.AddToRetry(job, time.Now().Add(1*time.Minute))
-		} else if p.verbose {
-			log.Printf("Re-enqueued retry job %s to queue %s", job.JID, job.Queue)
+		} else {
+			p.log.Debug("re-enqueued retry job", "jid", job.JID, "queue", job.Queue)
 		}
 	}
 }

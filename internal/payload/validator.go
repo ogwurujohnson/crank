@@ -6,19 +6,16 @@ import (
 	"sync"
 )
 
-// Validator validates job payloads before processing. Treat all job data as untrusted.
 type Validator interface {
 	Validate(job *Job) error
 }
 
-// ValidatorFunc adapts a function to Validator
 type ValidatorFunc func(job *Job) error
 
 func (f ValidatorFunc) Validate(job *Job) error {
 	return f(job)
 }
 
-// MaxArgsCount validates that job has at most n arguments
 func MaxArgsCount(n int) Validator {
 	return ValidatorFunc(func(job *Job) error {
 		if len(job.Args) > n {
@@ -28,7 +25,6 @@ func MaxArgsCount(n int) Validator {
 	})
 }
 
-// ClassAllowlist validates job class is in the allowlist (injection protection)
 func ClassAllowlist(classes map[string]bool) Validator {
 	return ValidatorFunc(func(job *Job) error {
 		if !classes[job.Class] {
@@ -38,7 +34,6 @@ func ClassAllowlist(classes map[string]bool) Validator {
 	})
 }
 
-// ClassPattern validates job class matches a regex (e.g. ^[A-Za-z0-9_]+$)
 func ClassPattern(pattern *regexp.Regexp) Validator {
 	return ValidatorFunc(func(job *Job) error {
 		if !pattern.MatchString(job.Class) {
@@ -48,7 +43,6 @@ func ClassPattern(pattern *regexp.Regexp) Validator {
 	})
 }
 
-// MaxPayloadSize validates serialized job size in bytes
 func MaxPayloadSize(maxBytes int) Validator {
 	return ValidatorFunc(func(job *Job) error {
 		data, err := job.ToJSON()
@@ -62,7 +56,6 @@ func MaxPayloadSize(maxBytes int) Validator {
 	})
 }
 
-// ChainValidator runs multiple validators in order
 type ChainValidator []Validator
 
 func (c ChainValidator) Validate(job *Job) error {
@@ -79,14 +72,12 @@ var (
 	validatorMu      sync.RWMutex
 )
 
-// SetDefaultValidator sets the global job payload validator
 func SetDefaultValidator(v Validator) {
 	validatorMu.Lock()
 	defer validatorMu.Unlock()
 	defaultValidator = v
 }
 
-// GetDefaultValidator returns the current default validator
 func GetDefaultValidator() Validator {
 	validatorMu.RLock()
 	defer validatorMu.RUnlock()
