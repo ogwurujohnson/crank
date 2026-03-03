@@ -137,6 +137,16 @@ engine.Use(func(next crank.Handler) crank.Handler {
 
 Crank composes the middleware chain once at startup, yielding a pre-compiled handler without per-job overhead.
 
+#### Circuit breaker behavior
+
+Crank's engine uses a built-in circuit breaker to protect your system from repeatedly failing job classes:
+
+- It tracks failures per job class in a sliding time window.
+- When failures for a class exceed a threshold in that window, the breaker for that class moves to **Open**, and the fetcher will temporarily avoid processing jobs of that class.
+- After a cool-down period, the breaker moves to **Half-Open** and allows a single probe job; a success closes the breaker, a failure re-opens it.
+
+This behavior is enabled by default when you construct an engine via `crank.NewEngine`.
+
 ### Payload validation and redaction
 
 Use validators to harden the system against malformed or unexpected jobs:

@@ -71,3 +71,21 @@ func RecoveryMiddleware(logger Logger) Middleware {
 		}
 	}
 }
+
+// BreakerMiddleware reports job success/failure to the circuit breaker after execution.
+func BreakerMiddleware(breaker *CircuitBreaker) Middleware {
+	if breaker == nil {
+		return func(next Handler) Handler { return next }
+	}
+	return func(next Handler) Handler {
+		return func(ctx context.Context, job *payload.Job) error {
+			err := next(ctx, job)
+			if err != nil {
+				breaker.RecordFailure(job.Class)
+				return err
+			}
+			breaker.RecordSuccess(job.Class)
+			return nil
+		}
+	}
+}

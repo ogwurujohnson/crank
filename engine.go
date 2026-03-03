@@ -46,14 +46,17 @@ func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
 		cfg.Logger = queue.NopLogger()
 	}
 	registry := &engineRegistry{workers: make(map[string]queue.Worker)}
+	breaker := queue.NewCircuitBreaker(queue.BreakerConfig{})
 	chain := queue.NewChain(
 		queue.RecoveryMiddleware(cfg.Logger),
 		queue.LoggingMiddleware(cfg.Logger),
+		queue.BreakerMiddleware(breaker),
 	)
 	processor, err := queue.NewProcessorWithChain(cfg, broker, registry, chain)
 	if err != nil {
 		return nil, err
 	}
+	processor.SetCircuitBreaker(breaker)
 
 	return &Engine{
 		cfg:       cfg,

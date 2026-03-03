@@ -29,6 +29,7 @@ type Processor struct {
 	retryTicker *time.Ticker
 	chain       *Chain
 	handler     Handler
+	breaker     *CircuitBreaker
 
 	metrics MetricsHandler
 	events  chan JobEvent
@@ -139,6 +140,7 @@ func (p *Processor) fetcher() {
 	defer close(p.jobCh)
 
 	dequeueTimeout := 1 * time.Second
+	const openSleep = 5 * time.Second
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -150,6 +152,18 @@ func (p *Processor) fetcher() {
 				continue
 			}
 			if job == nil {
+				continue
+			}
+			if p.breaker != nil && !p.breaker.Allow(job.Class) {
+				job.State = payload.JobStatePending
+				if err := p.broker.Enqueue(queue, job); err != nil {
+					p.log.Warn("requeue after breaker open failed", "jid", job.JID, "err", err)
+				}
+				select {
+				case <-p.ctx.Done():
+					return
+				case <-time.After(openSleep):
+				}
 				continue
 			}
 			job.State = payload.JobStateActive
@@ -347,6 +361,11 @@ func (p *Processor) metricsLoop() {
 			}()
 		}
 	}
+}
+
+// SetCircuitBreaker sets the circuit breaker used by the fetcher to skip open job classes.
+func (p *Processor) SetCircuitBreaker(b *CircuitBreaker) {
+	p.breaker = b
 }
 
 func (p *Processor) SetMetricsHandler(handler MetricsHandler) {
