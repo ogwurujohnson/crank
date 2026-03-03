@@ -33,4 +33,3 @@ func TestInMemoryMetrics_CountsEvents(t *testing.T) {
 	c.Assert(metrics.ProcessedTotal(), qt.Equals, int64(1))
 	c.Assert(metrics.FailedTotal(), qt.Equals, int64(2))
 }
-
