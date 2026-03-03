@@ -48,7 +48,7 @@ Because everything depends only on `Broker`, you can:
 - Use Redis for production and a different broker in tests.
 - Swap in a custom backend (SQL, other queues) without changing engine or client code.
 
-### Processor, worker pool, and backpressure
+### Processor, worker pool, backpressure, and circuit breaker
 
 The processor is responsible for executing jobs with controlled concurrency.
 
@@ -56,6 +56,7 @@ Components:
 
 - **Fetcher goroutine**: Calls `Broker.Dequeue` in a loop and sends jobs into an unbuffered channel.
 - **Worker goroutines**: `N` workers (where \(N =\) `config.Concurrency`) read from the channel and execute jobs.
+- **Circuit breaker**: Tracks failures per job class and can temporarily stop processing classes that are repeatedly failing.
 
 Backpressure is achieved by using an unbuffered job channel:
 
@@ -63,7 +64,13 @@ Backpressure is achieved by using an unbuffered job channel:
 - The fetcher blocks on `jobCh <- job` and thus stops pulling from the broker.
 - As soon as a worker finishes and reads from the channel, the fetcher can pull again.
 
-This design ensures Crank does not overload your workers or Redis when jobs are slow or spiky.
+The circuit breaker runs alongside this backpressure mechanism:
+
+- For each job class, it maintains a sliding window of recent failures.
+- If a class fails more than a threshold within that window, its breaker moves to **Open** and the fetcher re-enqueues jobs of that class and sleeps briefly instead of tight-looping.
+- After a cool-down period, the breaker moves to **Half-Open** and allows a single probe job; a success closes the breaker, a failure re-opens it.
+
+This design ensures Crank does not overload your workers or Redis when jobs are slow or spiky, and also protects the system from hammering persistently failing job types.
 
 ### Engine and worker registry
 
@@ -115,6 +122,7 @@ Built-in middleware:
 
 - `LoggingMiddleware(logger)`: logs job failures with redacted arguments.
 - `RecoveryMiddleware(logger)`: catches panics, logs a stack trace, and converts the panic into an error so the job can be retried or moved to dead.
+- `BreakerMiddleware(breaker)`: reports job success/failure to the circuit breaker so it can track per-class health.
 
 ### Payload validation and redaction
 

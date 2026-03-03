@@ -18,6 +18,7 @@ go get github.com/ogwurujohnson/crank
 - **Broker**: Backend that stores jobs and stats (Redis by default), behind a `Broker` interface.
 - **Client**: Enqueues jobs into queues via the broker.
 - **Engine / Processor**: Dequeues jobs from queues and dispatches them to workers using a worker pool with backpressure.
+- **Circuit breaker**: Tracks per-job-class failures and temporarily pauses classes that are repeatedly failing, to avoid hammering unhealthy work.
 - **Worker**: Your implementation that performs the actual job.
 - **Queue**: Named stream of jobs with a weight that controls polling priority.
 
@@ -108,6 +109,8 @@ if err != nil {
 	log.Fatal(err)
 }
 ```
+
+By default, the engine wires in a per-class circuit breaker. You do not need to configure it to benefit from it: if a particular job class keeps failing within a short window, Crank will temporarily stop fetching jobs of that class, wait for a cool-down period, and then slowly resume processing with a single probe job.
 
 Example YAML:
 
