@@ -28,4 +28,3 @@ type JobEvent struct {
 type MetricsHandler interface {
 	HandleJobEvent(ctx context.Context, e JobEvent)
 }
-

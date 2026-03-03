@@ -364,4 +364,3 @@ func (p *Processor) SetMetricsHandler(handler MetricsHandler) {
 	}
 	p.events = make(chan JobEvent, size)
 }
-

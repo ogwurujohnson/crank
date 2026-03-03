@@ -50,9 +50,9 @@ type Logger = config.Logger
 var LoadConfig = config.Load
 
 type (
-	Processor = queue.Processor
-	Queue     = queue.Queue
-	Stats     = queue.Stats
+	Processor      = queue.Processor
+	Queue          = queue.Queue
+	Stats          = queue.Stats
 	MetricsHandler = queue.MetricsHandler
 	JobEvent       = queue.JobEvent
 	EventType      = queue.EventType
