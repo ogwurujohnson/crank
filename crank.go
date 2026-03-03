@@ -53,12 +53,23 @@ type (
 	Processor = queue.Processor
 	Queue     = queue.Queue
 	Stats     = queue.Stats
+	MetricsHandler = queue.MetricsHandler
+	JobEvent       = queue.JobEvent
+	EventType      = queue.EventType
 )
 
 var (
 	NewQueue  = queue.NewQueue
 	GetStats  = queue.GetStats
 	NopLogger = queue.NopLogger
+)
+
+const (
+	EventJobStarted        = queue.EventJobStarted
+	EventJobSucceeded      = queue.EventJobSucceeded
+	EventJobFailed         = queue.EventJobFailed
+	EventJobRetryScheduled = queue.EventJobRetryScheduled
+	EventJobMovedToDead    = queue.EventJobMovedToDead
 )
 
 type Worker = queue.Worker

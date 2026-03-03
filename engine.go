@@ -88,3 +88,10 @@ func (e *Engine) Start() error {
 func (e *Engine) Stop() {
 	e.processor.Stop()
 }
+
+func (e *Engine) SetMetricsHandler(h MetricsHandler) {
+	if e.processor == nil {
+		return
+	}
+	e.processor.SetMetricsHandler(h)
+}

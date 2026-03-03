@@ -229,6 +229,86 @@ defer engine.Stop()
 // Your HTTP server or other work here
 ```
 
+### Metrics sidecar with Prometheus
+
+Crank exposes a non-blocking internal event bus via `crank.MetricsHandler`. Workers emit `JobEvent`s into a buffered channel; a background goroutine calls your handler. If your metrics backend is slow, events are dropped rather than blocking job execution.
+
+```go
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"github.com/ogwurujohnson/crank"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+var (
+	jobDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "crank_job_duration_seconds",
+			Help: "Time spent executing jobs.",
+			// Buckets: prometheus.DefBuckets, or tune for your workloads.
+		},
+		[]string{"class", "queue", "state"},
+	)
+	jobTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "crank_jobs_total",
+			Help: "Total number of processed jobs.",
+		},
+		[]string{"class", "queue", "state"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(jobDuration, jobTotal)
+}
+
+type promMetrics struct{}
+
+func (promMetrics) HandleJobEvent(ctx context.Context, e crank.JobEvent) {
+	class := e.Job.Class
+	queue := e.Queue
+
+	switch e.Type {
+	case crank.EventJobStarted:
+		// optional: track in-flight gauge
+	case crank.EventJobSucceeded:
+		jobDuration.WithLabelValues(class, queue, "success").Observe(e.Duration.Seconds())
+		jobTotal.WithLabelValues(class, queue, "success").Inc()
+	case crank.EventJobFailed:
+		jobDuration.WithLabelValues(class, queue, "failed").Observe(e.Duration.Seconds())
+		jobTotal.WithLabelValues(class, queue, "failed").Inc()
+	case crank.EventJobRetryScheduled:
+		jobTotal.WithLabelValues(class, queue, "retry_scheduled").Inc()
+	case crank.EventJobMovedToDead:
+		jobTotal.WithLabelValues(class, queue, "dead").Inc()
+	}
+}
+
+func main() {
+	config, _ := crank.LoadConfig("config/crank.yml")
+	broker, _ := crank.NewRedisClient(config.Redis.URL, config.Redis.GetNetworkTimeout())
+	defer broker.Close()
+
+	engine, _ := crank.NewEngine(config, broker)
+	engine.SetMetricsHandler(promMetrics{})
+
+	// Expose Prometheus metrics on /metrics
+	http.Handle("/metrics", promhttp.Handler())
+	go http.ListenAndServe(":2112", nil)
+
+	if err := engine.Start(); err != nil {
+		panic(err)
+	}
+	defer engine.Stop()
+
+	select {} // your app logic here
+}
+```
+
 ### Structured logging (engine)
 
 The engine logs start/stop, job fetched, and job success/failure (with job ID and error) via `Config.Logger`. If nil, it uses a no-op logger. Use stdlib `log/slog` with a thin adapter:
