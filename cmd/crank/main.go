@@ -61,7 +61,7 @@ func main() {
 		log.Fatalf("Failed to create engine: %v", err)
 	}
 
-	engine.RegisterWorkers(map[string]crank.Worker{
+	engine.RegisterMany(map[string]crank.Worker{
 		"EmailWorker":  emailWorker{},
 		"ReportWorker": reportWorker{},
 	})

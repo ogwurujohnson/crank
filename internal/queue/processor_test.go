@@ -71,6 +71,14 @@ func (b *spyBroker) DeleteKey(string) error                    { return nil }
 func (b *spyBroker) GetStats() (map[string]interface{}, error) { return nil, nil }
 func (b *spyBroker) Close() error                              { return nil }
 
+type metricsChanHandler struct {
+	ch chan JobEvent
+}
+
+func (h metricsChanHandler) HandleJobEvent(ctx context.Context, e JobEvent) {
+	h.ch <- e
+}
+
 func TestNewProcessor_QueuesWeightedDefault(t *testing.T) {
 	c := qt.New(t)
 
@@ -93,7 +101,6 @@ func TestNewProcessor_QueuesWeightedDefault(t *testing.T) {
 
 func TestProcessor_processJob_SchedulesRetryOnWorkerError(t *testing.T) {
 	c := qt.New(t)
-	globalMiddlewareChain = NewMiddlewareChain()
 
 	b := &spyBroker{}
 	p, err := NewProcessor(&config.Config{Concurrency: 1, Timeout: 1}, b, fixedRegistry{
@@ -110,11 +117,11 @@ func TestProcessor_processJob_SchedulesRetryOnWorkerError(t *testing.T) {
 	c.Assert(b.retryAt[0].Sub(t0) >= 2*time.Second, qt.IsTrue)
 	c.Assert(b.retryAt[0].Sub(t0) < 3*time.Second, qt.IsTrue)
 	c.Assert(len(b.dead), qt.Equals, 0)
+	c.Assert(j.State, qt.Equals, payload.JobStateFailed)
 }
 
 func TestProcessor_processJob_MovesToDeadWhenRetryExceeded(t *testing.T) {
 	c := qt.New(t)
-	globalMiddlewareChain = NewMiddlewareChain()
 
 	b := &spyBroker{}
 	p, err := NewProcessor(&config.Config{Concurrency: 1, Timeout: 1}, b, fixedRegistry{
@@ -128,6 +135,7 @@ func TestProcessor_processJob_MovesToDeadWhenRetryExceeded(t *testing.T) {
 	c.Assert(len(b.retry), qt.Equals, 0)
 	c.Assert(len(b.dead), qt.Equals, 1)
 	c.Assert(b.dead[0].JID, qt.Equals, j.JID)
+	c.Assert(j.State, qt.Equals, payload.JobStateDead)
 }
 
 func TestProcessor_processRetries_Reenqueues(t *testing.T) {
@@ -149,6 +157,7 @@ func TestProcessor_processRetries_Reenqueues(t *testing.T) {
 	c.Assert(len(b.enq), qt.Equals, 1)
 	c.Assert(b.enqQ[0], qt.Equals, "critical")
 	c.Assert(b.enq[0].JID, qt.Equals, b.retryJobs[0].JID)
+	c.Assert(b.enq[0].State, qt.Equals, payload.JobStatePending)
 }
 
 func TestProcessor_processRetries_ReaddsOnEnqueueError(t *testing.T) {
@@ -169,4 +178,58 @@ func TestProcessor_processRetries_ReaddsOnEnqueueError(t *testing.T) {
 	c.Assert(b.retry[0].JID, qt.Equals, j.JID)
 	c.Assert(b.retryAt[0].Sub(t0) >= time.Minute, qt.IsTrue)
 	c.Assert(b.retryAt[0].Sub(t0) < 2*time.Minute, qt.IsTrue)
+}
+
+func TestProcessor_MetricsEvents_EmittedAndNonBlocking(t *testing.T) {
+	c := qt.New(t)
+
+	b := &spyBroker{}
+	p, err := NewProcessor(&config.Config{Concurrency: 1, Timeout: 1}, b, fixedRegistry{
+		w: workerFunc(func(context.Context, ...interface{}) error { return nil }),
+	})
+	c.Assert(err, qt.IsNil)
+
+	eventsCh := make(chan JobEvent, 4)
+	p.SetMetricsHandler(metricsChanHandler{ch: eventsCh})
+
+	p.wg.Add(1)
+	go p.metricsLoop()
+
+	j := payload.NewJob("W", "default", 1)
+
+	done := make(chan struct{})
+	go func() {
+		p.processJob(j, "default")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("processJob did not return in time")
+	}
+
+	var types []EventType
+	for i := 0; i < 2; i++ {
+		select {
+		case e := <-eventsCh:
+			types = append(types, e.Type)
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for metrics event %d", i)
+		}
+	}
+
+	c.Assert(types[0], qt.Equals, EventJobStarted)
+
+	hasSuccess := false
+	for _, typ := range types {
+		if typ == EventJobSucceeded {
+			hasSuccess = true
+			break
+		}
+	}
+	c.Assert(hasSuccess, qt.IsTrue)
+
+	p.cancel()
+	p.wg.Wait()
 }

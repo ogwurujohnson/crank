@@ -217,7 +217,7 @@ broker, _ := crank.NewRedisClient(config.Redis.URL, config.Redis.GetNetworkTimeo
 defer broker.Close()
 
 engine, _ := crank.NewEngine(config, broker)
-engine.RegisterWorkers(map[string]crank.Worker{
+engine.RegisterMany(map[string]crank.Worker{
 	"EmailWorker": &EmailWorker{},
 })
 // or engine.Register("EmailWorker", &EmailWorker{}) for a single worker
@@ -227,6 +227,86 @@ if err := engine.Start(); err != nil {
 defer engine.Stop()
 
 // Your HTTP server or other work here
+```
+
+### Metrics sidecar with Prometheus
+
+Crank exposes a non-blocking internal event bus via `crank.MetricsHandler`. Workers emit `JobEvent`s into a buffered channel; a background goroutine calls your handler. If your metrics backend is slow, events are dropped rather than blocking job execution.
+
+```go
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"github.com/ogwurujohnson/crank"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+var (
+	jobDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "crank_job_duration_seconds",
+			Help: "Time spent executing jobs.",
+			// Buckets: prometheus.DefBuckets, or tune for your workloads.
+		},
+		[]string{"class", "queue", "state"},
+	)
+	jobTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "crank_jobs_total",
+			Help: "Total number of processed jobs.",
+		},
+		[]string{"class", "queue", "state"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(jobDuration, jobTotal)
+}
+
+type promMetrics struct{}
+
+func (promMetrics) HandleJobEvent(ctx context.Context, e crank.JobEvent) {
+	class := e.Job.Class
+	queue := e.Queue
+
+	switch e.Type {
+	case crank.EventJobStarted:
+		// optional: track in-flight gauge
+	case crank.EventJobSucceeded:
+		jobDuration.WithLabelValues(class, queue, "success").Observe(e.Duration.Seconds())
+		jobTotal.WithLabelValues(class, queue, "success").Inc()
+	case crank.EventJobFailed:
+		jobDuration.WithLabelValues(class, queue, "failed").Observe(e.Duration.Seconds())
+		jobTotal.WithLabelValues(class, queue, "failed").Inc()
+	case crank.EventJobRetryScheduled:
+		jobTotal.WithLabelValues(class, queue, "retry_scheduled").Inc()
+	case crank.EventJobMovedToDead:
+		jobTotal.WithLabelValues(class, queue, "dead").Inc()
+	}
+}
+
+func main() {
+	config, _ := crank.LoadConfig("config/crank.yml")
+	broker, _ := crank.NewRedisClient(config.Redis.URL, config.Redis.GetNetworkTimeout())
+	defer broker.Close()
+
+	engine, _ := crank.NewEngine(config, broker)
+	engine.SetMetricsHandler(promMetrics{})
+
+	// Expose Prometheus metrics on /metrics
+	http.Handle("/metrics", promhttp.Handler())
+	go http.ListenAndServe(":2112", nil)
+
+	if err := engine.Start(); err != nil {
+		panic(err)
+	}
+	defer engine.Stop()
+
+	select {} // your app logic here
+}
 ```
 
 ### Structured logging (engine)
@@ -249,19 +329,35 @@ engine, _ := crank.NewEngine(config, broker)
 
 To disable engine logging, set `config.Logger = crank.NopLogger()` or leave it nil.
 
-### Middleware and logging with redaction
+### Middleware (pre-compiled onion)
+
+Middleware uses an onion/decorator pattern:
+
+- `crank.Handler`: `func(ctx context.Context, job *crank.Job) error`
+- `crank.Middleware`: `func(next crank.Handler) crank.Handler`
+
+The engine composes the middleware stack once at startup and reuses the baked handler for every job.
+
+Attach middleware per engine:
 
 ```go
-crank.AddMiddleware(crank.LoggingMiddleware) // logs failures with redacted args
+engine, _ := crank.NewEngine(config, broker)
 
-// Or custom middleware
-crank.AddMiddleware(func(ctx context.Context, job *crank.Job, next func() error) error {
-	start := time.Now()
-	err := next()
-	log.Printf("Job %s took %v", job.JID, time.Since(start))
-	return err
+engine.Use(crank.LoggingMiddleware(config.Logger))
+engine.Use(func(next crank.Handler) crank.Handler {
+	return func(ctx context.Context, job *crank.Job) error {
+		start := time.Now()
+		err := next(ctx, job)
+		config.Logger.Info("job timing", "jid", job.JID, "duration", time.Since(start))
+		return err
+	}
 })
 ```
+
+Built-ins:
+
+- `crank.LoggingMiddleware(logger crank.Logger)`: logs job failures with redacted args.
+- `crank.RecoveryMiddleware(logger crank.Logger)`: catches panics, logs a stack trace, and converts the panic into an error so the job can be retried or moved to dead.
 
 ### Payload validation and redaction
 

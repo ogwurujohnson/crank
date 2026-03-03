@@ -17,20 +17,20 @@ type engineRegistry struct {
 func (r *engineRegistry) GetWorker(className string) (queue.Worker, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	w, ok := r.workers[className]
+	worker, ok := r.workers[className]
 	if !ok {
 		return nil, fmt.Errorf("worker class '%s' not found", className)
 	}
-	return w, nil
+	return worker, nil
 }
 
-func (r *engineRegistry) register(className string, w queue.Worker) {
+func (r *engineRegistry) register(className string, worker queue.Worker) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.workers == nil {
 		r.workers = make(map[string]queue.Worker)
 	}
-	r.workers[className] = w
+	r.workers[className] = worker
 }
 
 type Engine struct {
@@ -38,6 +38,7 @@ type Engine struct {
 	broker    broker.Broker
 	processor *queue.Processor
 	registry  *engineRegistry
+	chain     *queue.Chain
 }
 
 func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
@@ -45,7 +46,11 @@ func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
 		cfg.Logger = queue.NopLogger()
 	}
 	registry := &engineRegistry{workers: make(map[string]queue.Worker)}
-	processor, err := queue.NewProcessor(cfg, broker, registry)
+	chain := queue.NewChain(
+		queue.RecoveryMiddleware(cfg.Logger),
+		queue.LoggingMiddleware(cfg.Logger),
+	)
+	processor, err := queue.NewProcessorWithChain(cfg, broker, registry, chain)
 	if err != nil {
 		return nil, err
 	}
@@ -55,16 +60,24 @@ func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
 		broker:    broker,
 		processor: processor,
 		registry:  registry,
+		chain:     chain,
 	}, nil
+}
+
+func (e *Engine) Use(middleware Middleware) {
+	if e.chain == nil {
+		return
+	}
+	e.chain.Use(middleware)
 }
 
 func (e *Engine) Register(className string, worker Worker) {
 	e.registry.register(className, worker)
 }
 
-func (e *Engine) RegisterWorkers(workers map[string]Worker) {
-	for name, w := range workers {
-		e.registry.register(name, w)
+func (e *Engine) RegisterMany(workers map[string]Worker) {
+	for name, worker := range workers {
+		e.registry.register(name, worker)
 	}
 }
 
@@ -74,4 +87,11 @@ func (e *Engine) Start() error {
 
 func (e *Engine) Stop() {
 	e.processor.Stop()
+}
+
+func (e *Engine) SetMetricsHandler(h MetricsHandler) {
+	if e.processor == nil {
+		return
+	}
+	e.processor.SetMetricsHandler(h)
 }

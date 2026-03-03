@@ -8,6 +8,16 @@ import (
 	"github.com/google/uuid"
 )
 
+type JobState string
+
+const (
+	JobStatePending JobState = "pending"
+	JobStateActive  JobState = "active"
+	JobStateSuccess JobState = "success"
+	JobStateFailed  JobState = "failed"
+	JobStateDead    JobState = "dead"
+)
+
 type Job struct {
 	JID        string                 `json:"jid"`
 	Class      string                 `json:"class"`
@@ -18,6 +28,7 @@ type Job struct {
 	CreatedAt  float64                `json:"created_at"`
 	EnqueuedAt float64                `json:"enqueued_at"`
 	Backtrace  bool                   `json:"backtrace"`
+	State      JobState               `json:"state,omitempty"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -33,6 +44,7 @@ func NewJob(workerClass string, queue string, args ...interface{}) *Job {
 		CreatedAt:  now,
 		EnqueuedAt: now,
 		Backtrace:  false,
+		State:      JobStatePending,
 		Metadata:   make(map[string]interface{}),
 	}
 }
@@ -55,6 +67,9 @@ func FromJSON(data []byte) (*Job, error) {
 	var job Job
 	if err := json.Unmarshal(data, &job); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal job: %w", err)
+	}
+	if job.State == "" {
+		job.State = JobStatePending
 	}
 	return &job, nil
 }

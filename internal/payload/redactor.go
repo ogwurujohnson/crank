@@ -31,21 +31,21 @@ type FieldMaskingRedactor struct {
 
 func (f *FieldMaskingRedactor) RedactArgs(args []interface{}) string {
 	parts := make([]string, len(args))
-	for i, a := range args {
-		if m, ok := a.(map[string]interface{}); ok {
+	for index, arg := range args {
+		if argMap, ok := arg.(map[string]interface{}); ok {
 			masked := make(map[string]interface{})
-			for k, v := range m {
-				masked[k] = v
-				for _, sk := range f.Keys {
-					if strings.EqualFold(k, sk) {
-						masked[k] = "[REDACTED]"
+			for key, value := range argMap {
+				masked[key] = value
+				for _, sensitiveKey := range f.Keys {
+					if strings.EqualFold(key, sensitiveKey) {
+						masked[key] = "[REDACTED]"
 						break
 					}
 				}
 			}
-			parts[i] = fmt.Sprintf("%v", masked)
+			parts[index] = fmt.Sprintf("%v", masked)
 		} else {
-			parts[i] = fmt.Sprintf("%v", a)
+			parts[index] = fmt.Sprintf("%v", arg)
 		}
 	}
 	return fmt.Sprintf("%v", parts)
