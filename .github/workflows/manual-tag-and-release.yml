@@ -1,0 +1,39 @@
+name: manual-tag-and-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag name (e.g. v1.2.3)"
+        required: true
+      ref:
+        description: "Branch or commit to tag"
+        required: false
+        default: main
+
+permissions:
+  contents: write
+
+jobs:
+  create_tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+          fetch-depth: 0
+
+      - name: Create and push tag
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag }}"
+          if git rev-parse "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$tag"
+          git push origin "$tag"
+
