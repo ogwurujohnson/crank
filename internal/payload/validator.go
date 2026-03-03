@@ -16,10 +16,10 @@ func (f ValidatorFunc) Validate(job *Job) error {
 	return f(job)
 }
 
-func MaxArgsCount(n int) Validator {
+func MaxArgsCount(maxArgs int) Validator {
 	return ValidatorFunc(func(job *Job) error {
-		if len(job.Args) > n {
-			return fmt.Errorf("job args count %d exceeds max %d", len(job.Args), n)
+		if len(job.Args) > maxArgs {
+			return fmt.Errorf("job args count %d exceeds max %d", len(job.Args), maxArgs)
 		}
 		return nil
 	})
@@ -59,8 +59,8 @@ func MaxPayloadSize(maxBytes int) Validator {
 type ChainValidator []Validator
 
 func (c ChainValidator) Validate(job *Job) error {
-	for _, v := range c {
-		if err := v.Validate(job); err != nil {
+	for _, validator := range c {
+		if err := validator.Validate(job); err != nil {
 			return err
 		}
 	}
@@ -72,10 +72,10 @@ var (
 	validatorMu      sync.RWMutex
 )
 
-func SetDefaultValidator(v Validator) {
+func SetDefaultValidator(validator Validator) {
 	validatorMu.Lock()
 	defer validatorMu.Unlock()
-	defaultValidator = v
+	defaultValidator = validator
 }
 
 func GetDefaultValidator() Validator {

@@ -27,11 +27,11 @@ func (c *Chain) Use(m ...Middleware) {
 }
 
 func (c *Chain) Wrap(final Handler) Handler {
-	h := final
-	for i := len(c.middlewares) - 1; i >= 0; i-- {
-		h = c.middlewares[i](h)
+	handler := final
+	for index := len(c.middlewares) - 1; index >= 0; index-- {
+		handler = c.middlewares[index](handler)
 	}
-	return h
+	return handler
 }
 
 func LoggingMiddleware(logger Logger) Middleware {
@@ -39,8 +39,8 @@ func LoggingMiddleware(logger Logger) Middleware {
 		return func(ctx context.Context, job *payload.Job) error {
 			err := next(ctx, job)
 			if err != nil {
-				r := payload.GetDefaultRedactor()
-				safeArgs := r.RedactArgs(job.Args)
+				redactor := payload.GetDefaultRedactor()
+				safeArgs := redactor.RedactArgs(job.Args)
 				logger.Error("job failed", "jid", job.JID, "args", safeArgs, "err", err)
 			}
 			return err
@@ -52,18 +52,18 @@ func RecoveryMiddleware(logger Logger) Middleware {
 	return func(next Handler) Handler {
 		return func(ctx context.Context, job *payload.Job) (err error) {
 			defer func() {
-				if r := recover(); r != nil {
+				if panicValue := recover(); panicValue != nil {
 					buf := make([]byte, 64<<10)
 					n := runtime.Stack(buf, false)
 					stack := string(buf[:n])
 
 					logger.Error("panic recovered in job handler",
 						"jid", job.JID,
-						"panic", r,
+						"panic", panicValue,
 						"stack", stack,
 					)
 
-					err = fmt.Errorf("panic: %v", r)
+					err = fmt.Errorf("panic: %v", panicValue)
 				}
 			}()
 

@@ -31,16 +31,16 @@ func NewRedisBroker(redisURL string, timeout time.Duration) (*RedisBroker, error
 }
 
 func NewRedisBrokerWithConfig(cfg RedisBrokerConfig) (*RedisBroker, error) {
-	u := strings.TrimSpace(cfg.URL)
-	if u == "" {
+	trimmedURL := strings.TrimSpace(cfg.URL)
+	if trimmedURL == "" {
 		return nil, fmt.Errorf("broker not available: Redis URL is empty (set redis.url in config or REDIS_URL)")
 	}
 
-	if cfg.UseTLS && !strings.HasPrefix(u, "rediss://") {
-		u = strings.Replace(u, "redis://", "rediss://", 1)
+	if cfg.UseTLS && !strings.HasPrefix(trimmedURL, "rediss://") {
+		trimmedURL = strings.Replace(trimmedURL, "redis://", "rediss://", 1)
 	}
 
-	opt, err := redis.ParseURL(u)
+	opt, err := redis.ParseURL(trimmedURL)
 	if err != nil {
 		return nil, fmt.Errorf("broker not available: invalid Redis URL: %w", err)
 	}
@@ -49,7 +49,7 @@ func NewRedisBrokerWithConfig(cfg RedisBrokerConfig) (*RedisBroker, error) {
 	opt.ReadTimeout = cfg.Timeout
 	opt.WriteTimeout = cfg.Timeout
 
-	if cfg.UseTLS || strings.HasPrefix(u, "rediss://") {
+	if cfg.UseTLS || strings.HasPrefix(trimmedURL, "rediss://") {
 		opt.TLSConfig = &tls.Config{
 			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: cfg.TLSInsecureSkipVerify,
@@ -99,8 +99,8 @@ func (r *RedisBroker) Ack(job *payload.Job) error {
 
 func (r *RedisBroker) Dequeue(queues []string, timeout time.Duration) (*payload.Job, string, error) {
 	queueKeys := make([]string, len(queues))
-	for i, q := range queues {
-		queueKeys[i] = fmt.Sprintf("queue:%s", q)
+	for queueIndex, queueName := range queues {
+		queueKeys[queueIndex] = fmt.Sprintf("queue:%s", queueName)
 	}
 
 	result, err := r.client.BRPop(r.ctx, timeout, queueKeys...).Result()

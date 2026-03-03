@@ -38,53 +38,53 @@ type Stats struct {
 }
 
 func getInt64(m map[string]interface{}, key string) (int64, error) {
-	v, ok := m[key]
-	if !ok || v == nil {
+	value, ok := m[key]
+	if !ok || value == nil {
 		return 0, fmt.Errorf("stats: missing or nil %q", key)
 	}
-	switch n := v.(type) {
+	switch numericValue := value.(type) {
 	case int64:
-		return n, nil
+		return numericValue, nil
 	case int:
-		return int64(n), nil
+		return int64(numericValue), nil
 	case float64:
-		return int64(n), nil
+		return int64(numericValue), nil
 	default:
-		return 0, fmt.Errorf("stats: %q has invalid type %T", key, v)
+		return 0, fmt.Errorf("stats: %q has invalid type %T", key, value)
 	}
 }
 
 func getQueuesMap(m map[string]interface{}, key string) (map[string]int64, error) {
-	v, ok := m[key]
-	if !ok || v == nil {
+	value, ok := m[key]
+	if !ok || value == nil {
 		return nil, fmt.Errorf("stats: missing or nil %q", key)
 	}
-	if q, ok := v.(map[string]int64); ok {
-		out := make(map[string]int64, len(q))
-		for k, n := range q {
-			out[k] = n
+	if queueMap, ok := value.(map[string]int64); ok {
+		out := make(map[string]int64, len(queueMap))
+		for queueName, queueSize := range queueMap {
+			out[queueName] = queueSize
 		}
 		return out, nil
 	}
-	raw, ok := v.(map[string]interface{})
+	rawMap, ok := value.(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("stats: %q is not a map", key)
 	}
-	out := make(map[string]int64, len(raw))
-	for k, val := range raw {
+	out := make(map[string]int64, len(rawMap))
+	for queueName, val := range rawMap {
 		if val == nil {
-			out[k] = 0
+			out[queueName] = 0
 			continue
 		}
-		switch n := val.(type) {
+		switch numericValue := val.(type) {
 		case int64:
-			out[k] = n
+			out[queueName] = numericValue
 		case int:
-			out[k] = int64(n)
+			out[queueName] = int64(numericValue)
 		case float64:
-			out[k] = int64(n)
+			out[queueName] = int64(numericValue)
 		default:
-			return nil, fmt.Errorf("stats: %q[%s] has invalid type %T", key, k, val)
+			return nil, fmt.Errorf("stats: %q[%s] has invalid type %T", key, queueName, val)
 		}
 	}
 	return out, nil

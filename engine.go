@@ -17,20 +17,20 @@ type engineRegistry struct {
 func (r *engineRegistry) GetWorker(className string) (queue.Worker, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	w, ok := r.workers[className]
+	worker, ok := r.workers[className]
 	if !ok {
 		return nil, fmt.Errorf("worker class '%s' not found", className)
 	}
-	return w, nil
+	return worker, nil
 }
 
-func (r *engineRegistry) register(className string, w queue.Worker) {
+func (r *engineRegistry) register(className string, worker queue.Worker) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.workers == nil {
 		r.workers = make(map[string]queue.Worker)
 	}
-	r.workers[className] = w
+	r.workers[className] = worker
 }
 
 type Engine struct {
@@ -64,11 +64,11 @@ func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
 	}, nil
 }
 
-func (e *Engine) Use(m Middleware) {
+func (e *Engine) Use(middleware Middleware) {
 	if e.chain == nil {
 		return
 	}
-	e.chain.Use(m)
+	e.chain.Use(middleware)
 }
 
 func (e *Engine) Register(className string, worker Worker) {
@@ -76,8 +76,8 @@ func (e *Engine) Register(className string, worker Worker) {
 }
 
 func (e *Engine) RegisterMany(workers map[string]Worker) {
-	for name, w := range workers {
-		e.registry.register(name, w)
+	for name, worker := range workers {
+		e.registry.register(name, worker)
 	}
 }
 

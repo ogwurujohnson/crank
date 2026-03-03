@@ -34,11 +34,11 @@ type Processor struct {
 	events  chan JobEvent
 }
 
-func NewProcessor(cfg *config.Config, b broker.Broker, registry WorkerRegistry) (*Processor, error) {
-	return NewProcessorWithChain(cfg, b, registry, nil)
+func NewProcessor(cfg *config.Config, broker broker.Broker, registry WorkerRegistry) (*Processor, error) {
+	return NewProcessorWithChain(cfg, broker, registry, nil)
 }
 
-func NewProcessorWithChain(cfg *config.Config, b broker.Broker, registry WorkerRegistry, chain *Chain) (*Processor, error) {
+func NewProcessorWithChain(cfg *config.Config, broker broker.Broker, registry WorkerRegistry, chain *Chain) (*Processor, error) {
 	queues := make([]string, 0)
 	for _, qc := range cfg.Queues {
 		for i := 0; i < qc.Weight; i++ {
@@ -64,9 +64,9 @@ func NewProcessorWithChain(cfg *config.Config, b broker.Broker, registry WorkerR
 		)
 	}
 
-	p := &Processor{
+	processor := &Processor{
 		cfg:         cfg,
-		broker:      b,
+		broker:      broker,
 		registry:    registry,
 		log:         log,
 		queues:      queues,
@@ -77,14 +77,14 @@ func NewProcessorWithChain(cfg *config.Config, b broker.Broker, registry WorkerR
 		chain:       chain,
 	}
 
-	return p, nil
+	return processor, nil
 }
 
 func (p *Processor) Start() error {
 	if p.chain != nil && p.handler == nil {
 		base := func(ctx context.Context, job *payload.Job) error {
-			if v := payload.GetDefaultValidator(); v != nil {
-				if err := v.Validate(job); err != nil {
+			if validator := payload.GetDefaultValidator(); validator != nil {
+				if err := validator.Validate(job); err != nil {
 					return err
 				}
 			}
@@ -110,7 +110,7 @@ func (p *Processor) Start() error {
 	p.wg.Add(1)
 	go p.fetcher()
 
-	for i := 0; i < p.cfg.Concurrency; i++ {
+	for workerSlot := 0; workerSlot < p.cfg.Concurrency; workerSlot++ {
 		p.wg.Add(1)
 		go p.worker()
 	}
@@ -195,8 +195,8 @@ func (p *Processor) processJob(job *payload.Job, queue string) {
 	handler := p.handler
 	if handler == nil {
 		handler = func(ctx context.Context, job *payload.Job) error {
-			if v := payload.GetDefaultValidator(); v != nil {
-				if err := v.Validate(job); err != nil {
+			if validator := payload.GetDefaultValidator(); validator != nil {
+				if err := validator.Validate(job); err != nil {
 					return err
 				}
 			}
@@ -312,15 +312,15 @@ func (p *Processor) processRetries() {
 	}
 }
 
-func (p *Processor) emitEvent(e JobEvent) {
+func (p *Processor) emitEvent(event JobEvent) {
 	if p.metrics == nil || p.events == nil {
 		return
 	}
 
 	select {
-	case p.events <- e:
+	case p.events <- event:
 	default:
-		p.log.Debug("metrics event dropped", "type", e.Type, "jid", e.Job.JID)
+		p.log.Debug("metrics event dropped", "type", event.Type, "jid", event.Job.JID)
 	}
 }
 
@@ -331,27 +331,27 @@ func (p *Processor) metricsLoop() {
 		select {
 		case <-p.ctx.Done():
 			return
-		case e, ok := <-p.events:
+		case event, ok := <-p.events:
 			if !ok {
 				return
 			}
 
 			func() {
 				defer func() {
-					if r := recover(); r != nil {
-						p.log.Warn("panic in metrics handler", "panic", r)
+					if panicValue := recover(); panicValue != nil {
+						p.log.Warn("panic in metrics handler", "panic", panicValue)
 					}
 				}()
 
-				p.metrics.HandleJobEvent(context.Background(), e)
+				p.metrics.HandleJobEvent(context.Background(), event)
 			}()
 		}
 	}
 }
 
-func (p *Processor) SetMetricsHandler(h MetricsHandler) {
-	p.metrics = h
-	if h == nil {
+func (p *Processor) SetMetricsHandler(handler MetricsHandler) {
+	p.metrics = handler
+	if handler == nil {
 		return
 	}
 	if p.events != nil {
