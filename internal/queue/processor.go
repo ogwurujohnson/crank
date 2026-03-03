@@ -27,9 +27,15 @@ type Processor struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	retryTicker *time.Ticker
+	chain       *Chain
+	handler     Handler
 }
 
 func NewProcessor(cfg *config.Config, b broker.Broker, registry WorkerRegistry) (*Processor, error) {
+	return NewProcessorWithChain(cfg, b, registry, nil)
+}
+
+func NewProcessorWithChain(cfg *config.Config, b broker.Broker, registry WorkerRegistry, chain *Chain) (*Processor, error) {
 	queues := make([]string, 0)
 	for _, qc := range cfg.Queues {
 		for i := 0; i < qc.Weight; i++ {
@@ -48,6 +54,13 @@ func NewProcessor(cfg *config.Config, b broker.Broker, registry WorkerRegistry) 
 		log = NopLogger()
 	}
 
+	if chain == nil {
+		chain = NewChain(
+			RecoveryMiddleware(log),
+			LoggingMiddleware(log),
+		)
+	}
+
 	p := &Processor{
 		cfg:         cfg,
 		broker:      b,
@@ -58,12 +71,37 @@ func NewProcessor(cfg *config.Config, b broker.Broker, registry WorkerRegistry) 
 		ctx:         ctx,
 		cancel:      cancel,
 		retryTicker: time.NewTicker(5 * time.Second),
+		chain:       chain,
 	}
 
 	return p, nil
 }
 
 func (p *Processor) Start() error {
+	if p.chain != nil && p.handler == nil {
+		base := func(ctx context.Context, job *payload.Job) error {
+			if v := payload.GetDefaultValidator(); v != nil {
+				if err := v.Validate(job); err != nil {
+					return err
+				}
+			}
+
+			var worker Worker
+			var err error
+			if p.registry != nil {
+				worker, err = p.registry.GetWorker(job.Class)
+			} else {
+				worker, err = GetWorker(job.Class)
+			}
+			if err != nil {
+				return fmt.Errorf("worker not found: %w", err)
+			}
+
+			return worker.Perform(ctx, job.Args...)
+		}
+		p.handler = p.chain.Wrap(base)
+	}
+
 	p.log.Info("engine started", "concurrency", p.cfg.Concurrency, "queues", p.queues)
 
 	p.wg.Add(1)
@@ -139,31 +177,29 @@ func (p *Processor) processJob(job *payload.Job, queue string) {
 	ctx, cancel := context.WithTimeout(context.Background(), p.cfg.GetTimeout())
 	defer cancel()
 
-	if v := payload.GetDefaultValidator(); v != nil {
-		if err := v.Validate(job); err != nil {
-			p.log.Error("job failed validation", "jid", job.JID, "err", err)
-			p.handleFailure(job, err)
-			return
+	handler := p.handler
+	if handler == nil {
+		handler = func(ctx context.Context, job *payload.Job) error {
+			if v := payload.GetDefaultValidator(); v != nil {
+				if err := v.Validate(job); err != nil {
+					return err
+				}
+			}
+			var worker Worker
+			var err error
+			if p.registry != nil {
+				worker, err = p.registry.GetWorker(job.Class)
+			} else {
+				worker, err = GetWorker(job.Class)
+			}
+			if err != nil {
+				return fmt.Errorf("worker not found: %w", err)
+			}
+			return worker.Perform(ctx, job.Args...)
 		}
 	}
 
-	var worker Worker
-	var err error
-	if p.registry != nil {
-		worker, err = p.registry.GetWorker(job.Class)
-	} else {
-		worker, err = GetWorker(job.Class)
-	}
-	if err != nil {
-		p.log.Error("worker not found", "jid", job.JID, "class", job.Class, "err", err)
-		p.handleFailure(job, fmt.Errorf("worker not found: %w", err))
-		return
-	}
-
-	chain := GetMiddlewareChain()
-	err = chain.Execute(ctx, job, func() error {
-		return worker.Perform(ctx, job.Args...)
-	})
+	err := handler(ctx, job)
 	duration := time.Since(start)
 
 	if err != nil {

@@ -61,10 +61,6 @@ var (
 	NopLogger = queue.NopLogger
 )
 
-func NewProcessor(cfg *Config, b Broker) (*Processor, error) {
-	return queue.NewProcessor(cfg, b, nil)
-}
-
 type Worker = queue.Worker
 
 var (
@@ -73,14 +69,14 @@ var (
 	ListWorkers    = queue.ListWorkers
 )
 
-type MiddlewareFunc = queue.MiddlewareFunc
-type MiddlewareChain = queue.MiddlewareChain
+type Handler = queue.Handler
+type Middleware = queue.Middleware
+type Chain = queue.Chain
 
 var (
-	NewMiddlewareChain = queue.NewMiddlewareChain
-	AddMiddleware      = queue.AddMiddleware
-	GetMiddlewareChain = queue.GetMiddlewareChain
+	NewChain           = queue.NewChain
 	LoggingMiddleware  = queue.LoggingMiddleware
+	RecoveryMiddleware = queue.RecoveryMiddleware
 )
 
 type Redactor = payload.Redactor

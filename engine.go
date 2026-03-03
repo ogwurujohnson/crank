@@ -38,6 +38,7 @@ type Engine struct {
 	broker    broker.Broker
 	processor *queue.Processor
 	registry  *engineRegistry
+	chain     *queue.Chain
 }
 
 func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
@@ -45,7 +46,11 @@ func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
 		cfg.Logger = queue.NopLogger()
 	}
 	registry := &engineRegistry{workers: make(map[string]queue.Worker)}
-	processor, err := queue.NewProcessor(cfg, broker, registry)
+	chain := queue.NewChain(
+		queue.RecoveryMiddleware(cfg.Logger),
+		queue.LoggingMiddleware(cfg.Logger),
+	)
+	processor, err := queue.NewProcessorWithChain(cfg, broker, registry, chain)
 	if err != nil {
 		return nil, err
 	}
@@ -55,14 +60,22 @@ func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
 		broker:    broker,
 		processor: processor,
 		registry:  registry,
+		chain:     chain,
 	}, nil
+}
+
+func (e *Engine) Use(m Middleware) {
+	if e.chain == nil {
+		return
+	}
+	e.chain.Use(m)
 }
 
 func (e *Engine) Register(className string, worker Worker) {
 	e.registry.register(className, worker)
 }
 
-func (e *Engine) RegisterWorkers(workers map[string]Worker) {
+func (e *Engine) RegisterMany(workers map[string]Worker) {
 	for name, w := range workers {
 		e.registry.register(name, w)
 	}

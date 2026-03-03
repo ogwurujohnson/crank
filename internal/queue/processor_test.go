@@ -93,7 +93,6 @@ func TestNewProcessor_QueuesWeightedDefault(t *testing.T) {
 
 func TestProcessor_processJob_SchedulesRetryOnWorkerError(t *testing.T) {
 	c := qt.New(t)
-	globalMiddlewareChain = NewMiddlewareChain()
 
 	b := &spyBroker{}
 	p, err := NewProcessor(&config.Config{Concurrency: 1, Timeout: 1}, b, fixedRegistry{
@@ -114,7 +113,6 @@ func TestProcessor_processJob_SchedulesRetryOnWorkerError(t *testing.T) {
 
 func TestProcessor_processJob_MovesToDeadWhenRetryExceeded(t *testing.T) {
 	c := qt.New(t)
-	globalMiddlewareChain = NewMiddlewareChain()
 
 	b := &spyBroker{}
 	p, err := NewProcessor(&config.Config{Concurrency: 1, Timeout: 1}, b, fixedRegistry{

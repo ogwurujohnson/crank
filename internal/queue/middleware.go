@@ -2,62 +2,72 @@ package queue
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"runtime"
 
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
-type MiddlewareFunc func(ctx context.Context, job *payload.Job, next func() error) error
+type Handler func(ctx context.Context, job *payload.Job) error
 
-type MiddlewareChain struct {
-	middlewares []MiddlewareFunc
+type Middleware func(next Handler) Handler
+
+type Chain struct {
+	middlewares []Middleware
 }
 
-func NewMiddlewareChain() *MiddlewareChain {
-	return &MiddlewareChain{
-		middlewares: make([]MiddlewareFunc, 0),
+func NewChain(ms ...Middleware) *Chain {
+	return &Chain{
+		middlewares: ms,
 	}
 }
 
-func (mc *MiddlewareChain) Add(middleware MiddlewareFunc) {
-	mc.middlewares = append(mc.middlewares, middleware)
+func (c *Chain) Use(m ...Middleware) {
+	c.middlewares = append(c.middlewares, m...)
 }
 
-func (mc *MiddlewareChain) Execute(ctx context.Context, job *payload.Job, final func() error) error {
-	if len(mc.middlewares) == 0 {
-		return final()
+func (c *Chain) Wrap(final Handler) Handler {
+	h := final
+	for i := len(c.middlewares) - 1; i >= 0; i-- {
+		h = c.middlewares[i](h)
 	}
+	return h
+}
 
-	var index int
-	var next func() error
-	next = func() error {
-		if index >= len(mc.middlewares) {
-			return final()
+func LoggingMiddleware(logger Logger) Middleware {
+	return func(next Handler) Handler {
+		return func(ctx context.Context, job *payload.Job) error {
+			err := next(ctx, job)
+			if err != nil {
+				r := payload.GetDefaultRedactor()
+				safeArgs := r.RedactArgs(job.Args)
+				logger.Error("job failed", "jid", job.JID, "args", safeArgs, "err", err)
+			}
+			return err
 		}
-		mw := mc.middlewares[index]
-		index++
-		return mw(ctx, job, next)
 	}
-
-	return next()
 }
 
-var globalMiddlewareChain = NewMiddlewareChain()
+func RecoveryMiddleware(logger Logger) Middleware {
+	return func(next Handler) Handler {
+		return func(ctx context.Context, job *payload.Job) (err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					buf := make([]byte, 64<<10)
+					n := runtime.Stack(buf, false)
+					stack := string(buf[:n])
 
-func AddMiddleware(middleware MiddlewareFunc) {
-	globalMiddlewareChain.Add(middleware)
-}
+					logger.Error("panic recovered in job handler",
+						"jid", job.JID,
+						"panic", r,
+						"stack", stack,
+					)
 
-func GetMiddlewareChain() *MiddlewareChain {
-	return globalMiddlewareChain
-}
+					err = fmt.Errorf("panic: %v", r)
+				}
+			}()
 
-func LoggingMiddleware(ctx context.Context, job *payload.Job, next func() error) error {
-	err := next()
-	if err != nil {
-		r := payload.GetDefaultRedactor()
-		safeArgs := r.RedactArgs(job.Args)
-		log.Printf("Job %s failed (args: %s): %v", job.JID, safeArgs, err)
+			return next(ctx, job)
+		}
 	}
-	return err
 }

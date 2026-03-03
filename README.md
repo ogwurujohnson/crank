@@ -217,7 +217,7 @@ broker, _ := crank.NewRedisClient(config.Redis.URL, config.Redis.GetNetworkTimeo
 defer broker.Close()
 
 engine, _ := crank.NewEngine(config, broker)
-engine.RegisterWorkers(map[string]crank.Worker{
+engine.RegisterMany(map[string]crank.Worker{
 	"EmailWorker": &EmailWorker{},
 })
 // or engine.Register("EmailWorker", &EmailWorker{}) for a single worker
@@ -249,19 +249,35 @@ engine, _ := crank.NewEngine(config, broker)
 
 To disable engine logging, set `config.Logger = crank.NopLogger()` or leave it nil.
 
-### Middleware and logging with redaction
+### Middleware (pre-compiled onion)
+
+Middleware uses an onion/decorator pattern:
+
+- `crank.Handler`: `func(ctx context.Context, job *crank.Job) error`
+- `crank.Middleware`: `func(next crank.Handler) crank.Handler`
+
+The engine composes the middleware stack once at startup and reuses the baked handler for every job.
+
+Attach middleware per engine:
 
 ```go
-crank.AddMiddleware(crank.LoggingMiddleware) // logs failures with redacted args
+engine, _ := crank.NewEngine(config, broker)
 
-// Or custom middleware
-crank.AddMiddleware(func(ctx context.Context, job *crank.Job, next func() error) error {
-	start := time.Now()
-	err := next()
-	log.Printf("Job %s took %v", job.JID, time.Since(start))
-	return err
+engine.Use(crank.LoggingMiddleware(config.Logger))
+engine.Use(func(next crank.Handler) crank.Handler {
+	return func(ctx context.Context, job *crank.Job) error {
+		start := time.Now()
+		err := next(ctx, job)
+		config.Logger.Info("job timing", "jid", job.JID, "duration", time.Since(start))
+		return err
+	}
 })
 ```
+
+Built-ins:
+
+- `crank.LoggingMiddleware(logger crank.Logger)`: logs job failures with redacted args.
+- `crank.RecoveryMiddleware(logger crank.Logger)`: catches panics, logs a stack trace, and converts the panic into an error so the job can be retried or moved to dead.
 
 ### Payload validation and redaction
 
