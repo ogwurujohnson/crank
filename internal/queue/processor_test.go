@@ -210,17 +210,15 @@ func TestProcessor_MetricsEvents_EmittedAndNonBlocking(t *testing.T) {
 	}
 
 	var types []EventType
-Loop:
-	for {
+	for i := 0; i < 2; i++ {
 		select {
 		case e := <-eventsCh:
 			types = append(types, e.Type)
-		default:
-			break Loop
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for metrics event %d", i)
 		}
 	}
 
-	c.Assert(len(types) >= 2, qt.IsTrue)
 	c.Assert(types[0], qt.Equals, EventJobStarted)
 
 	hasSuccess := false
