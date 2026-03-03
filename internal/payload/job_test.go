@@ -16,6 +16,7 @@ func TestNewJob(t *testing.T) {
 	c.Assert(j.JID, qt.Not(qt.Equals), "")
 	c.Assert(len(j.Args), qt.Equals, 2)
 	c.Assert(j.Metadata, qt.Not(qt.IsNil))
+	c.Assert(j.State, qt.Equals, JobStatePending)
 }
 
 func TestJob_SetRetry_SetBacktrace(t *testing.T) {
@@ -37,6 +38,7 @@ func TestJob_ToJSON_FromJSON_RoundTrip(t *testing.T) {
 	c.Assert(j2.Queue, qt.Equals, j.Queue)
 	c.Assert(j2.JID, qt.Equals, j.JID)
 	c.Assert(len(j2.Args), qt.Equals, 2)
+	c.Assert(j2.State, qt.Equals, JobStatePending)
 }
 
 func TestFromJSON_Invalid(t *testing.T) {
@@ -54,6 +56,7 @@ func TestFromJSON_ValidMinimal(t *testing.T) {
 	c.Assert(j.Class, qt.Equals, "W")
 	c.Assert(j.Queue, qt.Equals, "q")
 	c.Assert(len(j.Args), qt.Equals, 2)
+	c.Assert(j.State, qt.Equals, JobStatePending)
 }
 
 func TestJob_String(t *testing.T) {

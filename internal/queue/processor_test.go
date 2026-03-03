@@ -109,6 +109,7 @@ func TestProcessor_processJob_SchedulesRetryOnWorkerError(t *testing.T) {
 	c.Assert(b.retryAt[0].Sub(t0) >= 2*time.Second, qt.IsTrue)
 	c.Assert(b.retryAt[0].Sub(t0) < 3*time.Second, qt.IsTrue)
 	c.Assert(len(b.dead), qt.Equals, 0)
+	c.Assert(j.State, qt.Equals, payload.JobStateFailed)
 }
 
 func TestProcessor_processJob_MovesToDeadWhenRetryExceeded(t *testing.T) {
@@ -126,6 +127,7 @@ func TestProcessor_processJob_MovesToDeadWhenRetryExceeded(t *testing.T) {
 	c.Assert(len(b.retry), qt.Equals, 0)
 	c.Assert(len(b.dead), qt.Equals, 1)
 	c.Assert(b.dead[0].JID, qt.Equals, j.JID)
+	c.Assert(j.State, qt.Equals, payload.JobStateDead)
 }
 
 func TestProcessor_processRetries_Reenqueues(t *testing.T) {
@@ -147,6 +149,7 @@ func TestProcessor_processRetries_Reenqueues(t *testing.T) {
 	c.Assert(len(b.enq), qt.Equals, 1)
 	c.Assert(b.enqQ[0], qt.Equals, "critical")
 	c.Assert(b.enq[0].JID, qt.Equals, b.retryJobs[0].JID)
+	c.Assert(b.enq[0].State, qt.Equals, payload.JobStatePending)
 }
 
 func TestProcessor_processRetries_ReaddsOnEnqueueError(t *testing.T) {

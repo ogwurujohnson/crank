@@ -144,10 +144,12 @@ func (p *Processor) fetcher() {
 			if job == nil {
 				continue
 			}
-			p.log.Debug("job fetched", "jid", job.JID, "queue", queue, "class", job.Class)
+			job.State = payload.JobStateActive
+			p.log.Debug("job fetched", "jid", job.JID, "queue", queue, "class", job.Class, "state", job.State)
 
 			select {
 			case <-p.ctx.Done():
+				job.State = payload.JobStatePending
 				_ = p.broker.Enqueue(queue, job)
 				return
 			case p.jobCh <- jobMsg{job: job, queue: queue}:
@@ -203,10 +205,12 @@ func (p *Processor) processJob(job *payload.Job, queue string) {
 	duration := time.Since(start)
 
 	if err != nil {
-		p.log.Error("job failed", "jid", job.JID, "err", err, "duration", duration)
+		job.State = payload.JobStateFailed
+		p.log.Error("job failed", "jid", job.JID, "err", err, "duration", duration, "state", job.State)
 		p.handleFailure(job, err)
 	} else {
-		p.log.Info("job succeeded", "jid", job.JID, "duration", duration)
+		job.State = payload.JobStateSuccess
+		p.log.Info("job succeeded", "jid", job.JID, "duration", duration, "state", job.State)
 	}
 }
 
@@ -216,13 +220,14 @@ func (p *Processor) handleFailure(job *payload.Job, err error) {
 	if job.RetryCount <= job.Retry {
 		backoff := time.Duration(1<<uint(job.RetryCount)) * time.Second
 		retryAt := time.Now().Add(backoff)
-		p.log.Debug("scheduling retry", "jid", job.JID, "attempt", job.RetryCount, "max", job.Retry, "retryAt", retryAt)
+		p.log.Debug("scheduling retry", "jid", job.JID, "attempt", job.RetryCount, "max", job.Retry, "retryAt", retryAt, "state", job.State)
 
 		if err := p.broker.AddToRetry(job, retryAt); err != nil {
 			p.log.Warn("add to retry failed", "jid", job.JID, "err", err)
 		}
 	} else {
-		p.log.Warn("job exceeded max retries, moving to dead queue", "jid", job.JID)
+		job.State = payload.JobStateDead
+		p.log.Warn("job exceeded max retries, moving to dead queue", "jid", job.JID, "state", job.State)
 
 		if err := p.broker.AddToDead(job); err != nil {
 			p.log.Warn("add to dead failed", "jid", job.JID, "err", err)
@@ -256,11 +261,13 @@ func (p *Processor) processRetries() {
 			continue
 		}
 
+		job.State = payload.JobStatePending
+
 		if err := p.broker.Enqueue(job.Queue, job); err != nil {
 			p.log.Warn("re-enqueue retry failed", "jid", job.JID, "err", err)
 			p.broker.AddToRetry(job, time.Now().Add(1*time.Minute))
 		} else {
-			p.log.Debug("re-enqueued retry job", "jid", job.JID, "queue", job.Queue)
+			p.log.Debug("re-enqueued retry job", "jid", job.JID, "queue", job.Queue, "state", job.State)
 		}
 	}
 }
