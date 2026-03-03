@@ -58,6 +58,8 @@ type (
 	EventType      = queue.EventType
 )
 
+type InMemoryMetrics = queue.InMemoryMetrics
+
 var (
 	NewQueue  = queue.NewQueue
 	GetStats  = queue.GetStats
