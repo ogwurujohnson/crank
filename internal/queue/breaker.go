@@ -14,9 +14,9 @@ const (
 )
 
 type classState struct {
-	state            breakerState
-	failureTimes     []time.Time
-	openUntil        time.Time
+	state             breakerState
+	failureTimes      []time.Time
+	openUntil         time.Time
 	halfOpenProbeUsed bool
 }
 
@@ -52,7 +52,7 @@ func NewCircuitBreaker(cfg BreakerConfig) *CircuitBreaker {
 		failureThreshold: cfg.FailureThreshold,
 		window:           cfg.Window,
 		resetTimeout:     cfg.ResetTimeout,
-		classes:         make(map[string]*classState),
+		classes:          make(map[string]*classState),
 	}
 }
 
