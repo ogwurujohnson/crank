@@ -56,7 +56,6 @@ func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	processor.SetCircuitBreaker(breaker)
 
 	return &Engine{
 		cfg:       cfg,

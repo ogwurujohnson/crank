@@ -57,7 +57,7 @@ type (
 )
 
 var (
-	GetStats  = queue.GetStats
+	GetStats = queue.GetStats
 )
 
 const (
