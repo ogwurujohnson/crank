@@ -113,3 +113,25 @@ func GetValidator() payload.Validator  { return payload.GetDefaultValidator() }
 func SafeClassPattern() payload.Validator {
 	return payload.ClassPattern(regexp.MustCompile(`^[A-Za-z0-9_]+$`))
 }
+
+func QuickStart(configPath string) (*Engine, error) {
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	broker, err := NewRedisClientWithConfig(broker.RedisBrokerConfig{
+		URL:                   cfg.Redis.URL,
+		Timeout:               cfg.Redis.GetNetworkTimeout(),
+		UseTLS:                cfg.Redis.UseTLS,
+		TLSInsecureSkipVerify: cfg.Redis.TLSInsecureSkipVerify,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	client := NewClient(broker)
+	SetGlobalClient(client)
+
+	return NewEngine(cfg, broker)
+}

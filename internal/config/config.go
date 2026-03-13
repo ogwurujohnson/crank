@@ -108,6 +108,8 @@ func Load(path string) (*Config, error) {
 		cfg.Redis.NetworkTimeout = 5
 	}
 
+	// TODO: for all configs default to a value and throw error if not set
+
 	return &cfg, nil
 }
 
