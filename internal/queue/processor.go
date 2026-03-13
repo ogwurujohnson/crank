@@ -166,8 +166,6 @@ func (p *Processor) fetcher() {
 				continue
 			}
 
-			// ... (Circuit Breaker logic remains the same)
-
 			select {
 			case p.jobCh <- jobMsg{job: job, queue: q}:
 			case <-p.ctx.Done():
@@ -232,7 +230,11 @@ func (p *Processor) handleFailure(job *payload.Job, err error) {
 
 func (p *Processor) retryLoop() {
 	defer p.wg.Done()
-	ticker := time.NewTicker(5 * time.Second)
+	interval := p.cfg.RetryPollInterval
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {

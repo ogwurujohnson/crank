@@ -126,19 +126,15 @@ func TestProcessor_Lifecycle(t *testing.T) {
 	c := qt.New(t)
 
 	t.Run("RetryLoopIntegration", func(t *testing.T) {
-		// Testing the background loop requires a short wait or manual trigger.
-		// Since we want to test the logic that WAS in processRetries,
-		// we test the broker interactions that the loop performs.
 		job := payload.NewJob("W", "critical", 1)
 		b := &spyBroker{retryJobs: []*payload.Job{job}}
-		p, _ := NewProcessor(&config.Config{}, b, nil, nil)
+		p, _ := NewProcessor(&config.Config{RetryPollInterval: 20 * time.Millisecond}, b, nil, nil)
 
 		p.wg.Add(1)
 		go p.retryLoop()
 
-		// Give the loop a moment to run one tick
-		// In a production test, you might use a mocked Ticker to make this instant
-		time.Sleep(100 * time.Millisecond)
+		// Wait for one retry tick to run
+		time.Sleep(50 * time.Millisecond)
 		p.Stop()
 
 		c.Assert(len(b.removed) > 0, qt.IsTrue)

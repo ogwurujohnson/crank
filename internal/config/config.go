@@ -16,12 +16,13 @@ type Logger interface {
 }
 
 type Config struct {
-	Concurrency int           `yaml:"concurrency"`
-	Queues      []QueueConfig `yaml:"queues"`
-	Timeout     int           `yaml:"timeout"`
-	Verbose     bool          `yaml:"verbose"`
-	Redis       RedisConfig   `yaml:"redis"`
-	Logger      Logger        `yaml:"-"`
+	Concurrency       int           `yaml:"concurrency"`
+	Queues            []QueueConfig `yaml:"queues"`
+	Timeout           int           `yaml:"timeout"`
+	Verbose           bool          `yaml:"verbose"`
+	Redis             RedisConfig   `yaml:"redis"`
+	Logger            Logger        `yaml:"-"`
+	RetryPollInterval time.Duration `yaml:"-"` // optional; 0 means default 5s (used by tests)
 }
 
 // QueueConfig: YAML accepts [name, weight] or {name, weight, priority}. Priority reserved.
