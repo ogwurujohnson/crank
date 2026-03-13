@@ -67,11 +67,11 @@ func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
 	}, nil
 }
 
-func (e *Engine) Use(middleware Middleware) {
+func (e *Engine) Use(middleware ...Middleware) {
 	if e.chain == nil {
 		return
 	}
-	e.chain.Use(middleware)
+	e.chain.Use(middleware...)
 }
 
 func (e *Engine) Register(className string, worker Worker) {
@@ -90,11 +90,4 @@ func (e *Engine) Start() error {
 
 func (e *Engine) Stop() {
 	e.processor.Stop()
-}
-
-func (e *Engine) SetMetricsHandler(h MetricsHandler) {
-	if e.processor == nil {
-		return
-	}
-	e.processor.SetMetricsHandler(h)
 }

@@ -93,10 +93,6 @@ func (r *RedisBroker) Enqueue(queue string, job *payload.Job) error {
 	return nil
 }
 
-func (r *RedisBroker) Ack(job *payload.Job) error {
-	return nil
-}
-
 func (r *RedisBroker) Dequeue(queues []string, timeout time.Duration) (*payload.Job, string, error) {
 	queueKeys := make([]string, len(queues))
 	for queueIndex, queueName := range queues {

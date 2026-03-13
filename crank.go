@@ -1,4 +1,3 @@
-// Package crank is a background job queue for Go.
 package crank
 
 import (
@@ -28,7 +27,6 @@ type Job = payload.Job
 type JobOptions = payload.JobOptions
 
 var (
-	NewJob   = payload.NewJob
 	FromJSON = payload.FromJSON
 )
 
@@ -58,12 +56,8 @@ type (
 	EventType      = queue.EventType
 )
 
-type InMemoryMetrics = queue.InMemoryMetrics
-
 var (
-	NewQueue  = queue.NewQueue
 	GetStats  = queue.GetStats
-	NopLogger = queue.NopLogger
 )
 
 const (
@@ -78,7 +72,6 @@ type Worker = queue.Worker
 
 var (
 	RegisterWorker = queue.RegisterWorker
-	GetWorker      = queue.GetWorker
 	ListWorkers    = queue.ListWorkers
 )
 
@@ -87,7 +80,6 @@ type Middleware = queue.Middleware
 type Chain = queue.Chain
 
 var (
-	NewChain           = queue.NewChain
 	LoggingMiddleware  = queue.LoggingMiddleware
 	RecoveryMiddleware = queue.RecoveryMiddleware
 )

@@ -26,7 +26,6 @@ func (m *mockBroker) Enqueue(string, *payload.Job) error { return nil }
 func (m *mockBroker) Dequeue([]string, time.Duration) (*payload.Job, string, error) {
 	return nil, "", nil
 }
-func (m *mockBroker) Ack(*payload.Job) error                     { return nil }
 func (m *mockBroker) AddToRetry(*payload.Job, time.Time) error   { return nil }
 func (m *mockBroker) GetRetryJobs(int64) ([]*payload.Job, error) { return nil, nil }
 func (m *mockBroker) RemoveFromRetry(*payload.Job) error         { return nil }
