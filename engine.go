@@ -52,7 +52,7 @@ func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
 		queue.LoggingMiddleware(cfg.Logger),
 		queue.BreakerMiddleware(breaker),
 	)
-	processor, err := queue.NewProcessorWithChain(cfg, broker, registry, chain)
+	processor, err := queue.NewProcessor(cfg, broker, registry, chain)
 	if err != nil {
 		return nil, err
 	}

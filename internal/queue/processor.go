@@ -35,11 +35,7 @@ type Processor struct {
 	events  chan JobEvent
 }
 
-func NewProcessor(cfg *config.Config, broker broker.Broker, registry WorkerRegistry) (*Processor, error) {
-	return NewProcessorWithChain(cfg, broker, registry, nil)
-}
-
-func NewProcessorWithChain(cfg *config.Config, broker broker.Broker, registry WorkerRegistry, chain *Chain) (*Processor, error) {
+func NewProcessor(cfg *config.Config, broker broker.Broker, registry WorkerRegistry, chain *Chain) (*Processor, error) {
 	queues := make([]string, 0)
 	for _, qc := range cfg.Queues {
 		for i := 0; i < qc.Weight; i++ {

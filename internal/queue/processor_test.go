@@ -89,11 +89,11 @@ func TestNewProcessor_QueuesWeightedDefault(t *testing.T) {
 			{Name: "default", Weight: 1},
 		},
 		Timeout: 1,
-	}, b, nil)
+	}, b, nil, nil)
 	c.Assert(err, qt.IsNil)
 	c.Assert(p.queues, qt.DeepEquals, []string{"critical", "critical", "default"})
 
-	p, err = NewProcessor(&config.Config{Concurrency: 1, Timeout: 1}, b, nil)
+	p, err = NewProcessor(&config.Config{Concurrency: 1, Timeout: 1}, b, nil, nil)
 	c.Assert(err, qt.IsNil)
 	c.Assert(p.queues, qt.DeepEquals, []string{"default"})
 }
@@ -104,7 +104,7 @@ func TestProcessor_processJob_SchedulesRetryOnWorkerError(t *testing.T) {
 	b := &spyBroker{}
 	p, err := NewProcessor(&config.Config{Concurrency: 1, Timeout: 1}, b, fixedRegistry{
 		w: workerFunc(func(context.Context, ...interface{}) error { return errors.New("boom") }),
-	})
+	}, nil)
 	c.Assert(err, qt.IsNil)
 
 	j := payload.NewJob("W", "default", 1).SetRetry(1)
@@ -125,7 +125,7 @@ func TestProcessor_processJob_MovesToDeadWhenRetryExceeded(t *testing.T) {
 	b := &spyBroker{}
 	p, err := NewProcessor(&config.Config{Concurrency: 1, Timeout: 1}, b, fixedRegistry{
 		w: workerFunc(func(context.Context, ...interface{}) error { return errors.New("boom") }),
-	})
+	}, nil)
 	c.Assert(err, qt.IsNil)
 
 	j := payload.NewJob("W", "default", 1).SetRetry(0)
@@ -145,7 +145,7 @@ func TestProcessor_processRetries_Reenqueues(t *testing.T) {
 			payload.NewJob("W", "critical", 1),
 		},
 	}
-	p, err := NewProcessor(&config.Config{Concurrency: 1, Timeout: 1}, b, nil)
+	p, err := NewProcessor(&config.Config{Concurrency: 1, Timeout: 1}, b, nil, nil)
 	c.Assert(err, qt.IsNil)
 
 	p.processRetries()
@@ -167,7 +167,7 @@ func TestProcessor_processRetries_ReaddsOnEnqueueError(t *testing.T) {
 		enqueueErr: errors.New("nope"),
 		retryJobs:  []*payload.Job{j},
 	}
-	p, err := NewProcessor(&config.Config{Concurrency: 1, Timeout: 1}, b, nil)
+	p, err := NewProcessor(&config.Config{Concurrency: 1, Timeout: 1}, b, nil, nil)
 	c.Assert(err, qt.IsNil)
 
 	t0 := time.Now()
@@ -185,7 +185,7 @@ func TestProcessor_MetricsEvents_EmittedAndNonBlocking(t *testing.T) {
 	b := &spyBroker{}
 	p, err := NewProcessor(&config.Config{Concurrency: 1, Timeout: 1}, b, fixedRegistry{
 		w: workerFunc(func(context.Context, ...interface{}) error { return nil }),
-	})
+	}, nil)
 	c.Assert(err, qt.IsNil)
 
 	eventsCh := make(chan JobEvent, 4)
