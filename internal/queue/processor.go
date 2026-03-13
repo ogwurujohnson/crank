@@ -88,8 +88,15 @@ func (p *Processor) Start() error {
 
 			var worker Worker
 			var err error
+
+			// Prefer the engine-scoped registry when available, but fall back to the
+			// global registry so applications can register workers via crank.RegisterWorker
+			// even when using the default cmd/crank binary.
 			if p.registry != nil {
 				worker, err = p.registry.GetWorker(job.Class)
+				if err != nil {
+					worker, err = GetWorker(job.Class)
+				}
 			} else {
 				worker, err = GetWorker(job.Class)
 			}
@@ -99,6 +106,7 @@ func (p *Processor) Start() error {
 
 			return worker.Perform(ctx, job.Args...)
 		}
+		
 		p.handler = p.chain.Wrap(base)
 	}
 

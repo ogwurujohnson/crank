@@ -1,7 +1,19 @@
+// This example runs the Crank engine with two demo workers. Use it as a reference
+// for wiring config, Redis, client, engine, and worker registration.
+//
+// Run from the repo root:
+//
+//	go run ./examples/run
+//
+// Or build and run:
+//
+//	go build -o crank-example ./examples/run && ./crank-example -C config/crank.yml
 package main
 
 import (
+	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -9,6 +21,26 @@ import (
 
 	"github.com/ogwurujohnson/crank"
 )
+
+type emailWorker struct{}
+
+func (emailWorker) Perform(ctx context.Context, args ...interface{}) error {
+	if len(args) < 1 {
+		return fmt.Errorf("expected at least 1 argument")
+	}
+	log.Printf("EmailWorker: sent to user %v", args[0])
+	return nil
+}
+
+type reportWorker struct{}
+
+func (reportWorker) Perform(ctx context.Context, args ...interface{}) error {
+	if len(args) < 1 {
+		return fmt.Errorf("expected at least 1 argument")
+	}
+	log.Printf("ReportWorker: report %v", args[0])
+	return nil
+}
 
 func main() {
 	var configPath string
@@ -39,15 +71,16 @@ func main() {
 		log.Fatalf("Failed to create engine: %v", err)
 	}
 
-	// Register your workers here, or use crank in your own main and call
-	// engine.Register / engine.RegisterMany with your Worker implementations.
-	// See docs/engine.md and the README Quick Start for examples.
+	engine.RegisterMany(map[string]crank.Worker{
+		"EmailWorker":  emailWorker{},
+		"ReportWorker": reportWorker{},
+	})
 
 	if err := engine.Start(); err != nil {
 		log.Fatalf("Failed to start engine: %v", err)
 	}
 
-	log.Println("Crank started. Press Ctrl+C to stop.")
+	log.Println("Crank example started. Press Ctrl+C to stop.")
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
