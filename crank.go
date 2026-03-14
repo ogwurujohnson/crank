@@ -2,62 +2,186 @@ package crank
 
 import (
 	"regexp"
-	"time"
 
 	"github.com/ogwurujohnson/crank/internal/broker"
+	"github.com/ogwurujohnson/crank/internal/client"
 	"github.com/ogwurujohnson/crank/internal/config"
 	"github.com/ogwurujohnson/crank/internal/payload"
 	"github.com/ogwurujohnson/crank/internal/queue"
-	"github.com/ogwurujohnson/crank/pkg/sdk"
 )
 
-type Broker = broker.Broker
-type RedisClient = broker.RedisBroker
-type RedisBrokerConfig = broker.RedisBrokerConfig
+// New creates an Engine and Client connected to the broker at brokerURL.
+// Options configure concurrency, timeouts, queues, and logging.
+// The returned Client is the primary way to enqueue jobs; you may call SetGlobalClient(client) for global Enqueue/EnqueueWithOptions.
+func New(brokerURL string, opts ...Option) (*Engine, *Client, error) {
+	o := defaultOptions()
+	for _, opt := range opts {
+		opt(&o)
+	}
 
-func NewRedisClient(url string, timeout time.Duration) (*RedisClient, error) {
-	return broker.NewRedisBroker(url, timeout)
+	cfg := buildConfig(o, brokerURL)
+	b, err := newBroker(brokerURL, o)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	eng, err := newEngine(cfg, b)
+	if err != nil {
+		_ = b.Close()
+		return nil, nil, err
+	}
+
+	cl := client.New(b)
+	return eng, cl, nil
 }
 
-func NewRedisClientWithConfig(cfg RedisBrokerConfig) (*RedisClient, error) {
-	return broker.NewRedisBrokerWithConfig(cfg)
+func buildConfig(o options, brokerURL string) *config.Config {
+	timeoutSec := int(o.timeout.Seconds())
+	if timeoutSec <= 0 {
+		timeoutSec = 8
+	}
+	concurrency := o.concurrency
+	if concurrency <= 0 {
+		concurrency = 10
+	}
+	qc := make([]config.QueueConfig, len(o.queues))
+	for i, q := range o.queues {
+		qc[i] = config.QueueConfig{Name: q.Name, Weight: q.Weight}
+		if qc[i].Weight <= 0 {
+			qc[i].Weight = 1
+		}
+	}
+	if len(qc) == 0 {
+		qc = []config.QueueConfig{{Name: "default", Weight: 1}}
+	}
+	redisTimeoutSec := int(o.redisTimeout.Seconds())
+	if redisTimeoutSec <= 0 {
+		redisTimeoutSec = 5
+	}
+	return &config.Config{
+		Concurrency:       concurrency,
+		Timeout:           timeoutSec,
+		Queues:            qc,
+		Logger:            o.logger,
+		RetryPollInterval: o.retryPollInterval,
+		Redis: config.RedisConfig{
+			URL:                   brokerURL,
+			NetworkTimeout:        redisTimeoutSec,
+			UseTLS:                o.useTLS,
+			TLSInsecureSkipVerify: o.tlsInsecureSkip,
+		},
+	}
 }
 
-type Job = payload.Job
-type JobOptions = payload.JobOptions
+func newBroker(brokerURL string, o options) (broker.Broker, error) {
+	return broker.Open(o.brokerKind, brokerURL, broker.ConnOptions{
+		Timeout:               o.redisTimeout,
+		UseTLS:                o.useTLS,
+		TLSInsecureSkipVerify: o.tlsInsecureSkip,
+	})
+}
+
+// brokerURLAndOptsFromConfig returns the broker URL and ConnOptions for the configured broker kind.
+func brokerURLAndOptsFromConfig(cfg *config.Config) (url string, opts broker.ConnOptions) {
+	switch cfg.Broker {
+	case "redis":
+		return cfg.Redis.URL, broker.ConnOptions{
+			Timeout:               cfg.Redis.GetNetworkTimeout(),
+			UseTLS:                cfg.Redis.UseTLS,
+			TLSInsecureSkipVerify: cfg.Redis.TLSInsecureSkipVerify,
+		}
+	case "nats":
+		return cfg.NATS.URL, broker.ConnOptions{
+			Timeout: cfg.NATS.GetTimeout(),
+		}
+	default:
+		return cfg.Redis.URL, broker.ConnOptions{
+			Timeout:               cfg.Redis.GetNetworkTimeout(),
+			UseTLS:                cfg.Redis.UseTLS,
+			TLSInsecureSkipVerify: cfg.Redis.TLSInsecureSkipVerify,
+		}
+	}
+}
+
+// QuickStart builds an Engine and Client from a YAML config file and sets the global client.
+// Use New with options for programmatic configuration.
+func QuickStart(configPath string) (*Engine, *Client, error) {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	url, opts := brokerURLAndOptsFromConfig(cfg)
+	b, err := broker.Open(cfg.Broker, url, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	eng, err := newEngine(cfg, b)
+	if err != nil {
+		_ = b.Close()
+		return nil, nil, err
+	}
+
+	cl := client.New(b)
+	client.SetGlobal(cl)
+	return eng, cl, nil
+}
+
+// Client is the public client type for enqueueing jobs.
+type Client = client.Client
 
 var (
-	FromJSON = payload.FromJSON
+	NewClient          = client.New
+	SetGlobalClient    = client.SetGlobal
+	GetGlobalClient    = client.GetGlobal
+	Enqueue            = client.EnqueueGlobal
+	EnqueueWithOptions = client.EnqueueWithOptionsGlobal
 )
 
-type Client = sdk.Client
-
-var (
-	NewClient          = sdk.NewClient
-	SetGlobalClient    = sdk.SetGlobalClient
-	GetGlobalClient    = sdk.GetGlobalClient
-	Enqueue            = sdk.EnqueueGlobal
-	EnqueueWithOptions = sdk.EnqueueWithOptionsGlobal
-)
-
-type Config = config.Config
-type QueueConfig = config.QueueConfig
-type RedisConfig = config.RedisConfig
+// Logger is the interface used for engine logging.
 type Logger = config.Logger
 
-var LoadConfig = config.Load
+// JobOptions configures optional job behavior when enqueueing.
+type JobOptions = payload.JobOptions
 
-type (
-	Processor      = queue.Processor
-	Queue          = queue.Queue
-	Stats          = queue.Stats
-	MetricsHandler = queue.MetricsHandler
-	JobEvent       = queue.JobEvent
-	EventType      = queue.EventType
-)
+// Job is the job payload type (exposed for handlers and validation).
+type Job = payload.Job
+
+var FromJSON = payload.FromJSON
+
+// Worker is the interface implemented by job handlers.
+type Worker = queue.Worker
 
 var (
-	GetStats = queue.GetStats
+	RegisterWorker = queue.RegisterWorker
+	ListWorkers    = queue.ListWorkers
+)
+
+// Handler is the type of the core job execution function.
+type Handler = queue.Handler
+
+// Middleware wraps a Handler.
+type Middleware = queue.Middleware
+
+// Chain composes middleware (used by Engine.Use).
+type Chain = queue.Chain
+
+var (
+	LoggingMiddleware  = queue.LoggingMiddleware
+	RecoveryMiddleware = queue.RecoveryMiddleware
+)
+
+// Stats holds queue statistics (processed, retry, dead, queues).
+type Stats = queue.Stats
+
+// MetricsHandler handles job events for metrics.
+type MetricsHandler = queue.MetricsHandler
+
+// JobEvent and EventType are used by metrics and middleware.
+type (
+	JobEvent  = queue.JobEvent
+	EventType = queue.EventType
 )
 
 const (
@@ -68,22 +192,7 @@ const (
 	EventJobMovedToDead    = queue.EventJobMovedToDead
 )
 
-type Worker = queue.Worker
-
-var (
-	RegisterWorker = queue.RegisterWorker
-	ListWorkers    = queue.ListWorkers
-)
-
-type Handler = queue.Handler
-type Middleware = queue.Middleware
-type Chain = queue.Chain
-
-var (
-	LoggingMiddleware  = queue.LoggingMiddleware
-	RecoveryMiddleware = queue.RecoveryMiddleware
-)
-
+// Redactor redacts job args for logging.
 type Redactor = payload.Redactor
 
 var (
@@ -93,11 +202,15 @@ var (
 
 func SetRedactor(r payload.Redactor) { payload.SetDefaultRedactor(r) }
 func GetRedactor() payload.Redactor  { return payload.GetDefaultRedactor() }
+
 func NewFieldMaskingRedactor(keys []string) *payload.FieldMaskingRedactor {
 	return &payload.FieldMaskingRedactor{Keys: keys}
 }
 
+// Validator validates jobs before execution.
 type Validator = payload.Validator
+
+// ChainValidator composes validators.
 type ChainValidator = payload.ChainValidator
 
 var (
@@ -112,26 +225,4 @@ func GetValidator() payload.Validator  { return payload.GetDefaultValidator() }
 
 func SafeClassPattern() payload.Validator {
 	return payload.ClassPattern(regexp.MustCompile(`^[A-Za-z0-9_]+$`))
-}
-
-func QuickStart(configPath string) (*Engine, error) {
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		return nil, err
-	}
-
-	broker, err := NewRedisClientWithConfig(broker.RedisBrokerConfig{
-		URL:                   cfg.Redis.URL,
-		Timeout:               cfg.Redis.GetNetworkTimeout(),
-		UseTLS:                cfg.Redis.UseTLS,
-		TLSInsecureSkipVerify: cfg.Redis.TLSInsecureSkipVerify,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	client := NewClient(broker)
-	SetGlobalClient(client)
-
-	return NewEngine(cfg, broker)
 }

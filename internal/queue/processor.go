@@ -51,6 +51,9 @@ func NewProcessor(cfg *config.Config, b broker.Broker, registry WorkerRegistry, 
 
 	ctx, cancel := context.WithCancel(context.Background())
 	log := cfg.Logger
+	if log == nil {
+		log = NopLogger()
+	}
 
 	if chain == nil {
 		chain = NewChain(RecoveryMiddleware(log), LoggingMiddleware(log))

@@ -41,11 +41,12 @@ type Engine struct {
 	chain     *queue.Chain
 }
 
-func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
+// newEngine creates an Engine from internal config and broker. Used by New and QuickStart.
+func newEngine(cfg *config.Config, b broker.Broker) (*Engine, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = queue.NopLogger()
 	}
-	
+
 	registry := &engineRegistry{workers: make(map[string]queue.Worker)}
 	breaker := queue.NewCircuitBreaker(queue.BreakerConfig{})
 	chain := queue.NewChain(
@@ -53,14 +54,14 @@ func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
 		queue.LoggingMiddleware(cfg.Logger),
 		queue.BreakerMiddleware(breaker),
 	)
-	processor, err := queue.NewProcessor(cfg, broker, registry, chain)
+	processor, err := queue.NewProcessor(cfg, b, registry, chain)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Engine{
 		cfg:       cfg,
-		broker:    broker,
+		broker:    b,
 		processor: processor,
 		registry:  registry,
 		chain:     chain,
@@ -90,4 +91,9 @@ func (e *Engine) Start() error {
 
 func (e *Engine) Stop() {
 	e.processor.Stop()
+}
+
+// Stats returns queue statistics (processed, retry, dead, per-queue sizes).
+func (e *Engine) Stats() (*Stats, error) {
+	return queue.GetStats(e.broker)
 }

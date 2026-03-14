@@ -1,3 +1,7 @@
+# broker: redis | nats | rabbitmq (default: redis). Matching section (redis, nats, etc.) must be set.
+broker: redis
+# broker_url: optional fallback when redis.url / nats.url is empty
+
 concurrency: 10
 queues:
   - [critical, 5]
@@ -5,6 +9,15 @@ queues:
   - [low, 1]
 timeout: 8
 verbose: true
+
+# Required when broker is redis
 redis:
   url: redis://localhost:6379/0
   network_timeout: 5
+  use_tls: false
+  tls_insecure_skip_verify: false
+
+# Required when broker is nats (example for future use)
+# nats:
+#   url: nats://localhost:4222
+#   timeout: 5

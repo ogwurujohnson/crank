@@ -24,13 +24,7 @@ import "github.com/ogwurujohnson/crank"
 
 ## Quick Start
 
-This example shows how to:
-
-- Load engine configuration from YAML.
-- Connect to Redis.
-- Register a worker.
-- Start the engine.
-- Enqueue a job using the global client helpers.
+Use the fluent API to create an engine and client from a broker URL and options. For YAML-based configuration, use `crank.QuickStart(configPath)`.
 
 ```go
 package main
@@ -42,6 +36,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/ogwurujohnson/crank"
 )
@@ -59,49 +54,42 @@ func (w EmailWorker) Perform(ctx context.Context, args ...interface{}) error {
 		return fmt.Errorf("expected userID as string, got %T", args[0])
 	}
 
-	// Do your work here (e.g. send an email).
 	log.Printf("sending welcome email to user %s", userID)
 	return nil
 }
 
 func main() {
-	// 1) Load configuration (YAML + sensible defaults).
-	cfg, err := crank.LoadConfig("config/crank.yml")
-	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
+	brokerURL := os.Getenv("REDIS_URL")
+	if brokerURL == "" {
+		brokerURL = "redis://localhost:6379/0"
 	}
 
-	// 2) Create a Redis-backed broker.
-	redis, err := crank.NewRedisClient(cfg.Redis.URL, cfg.Redis.GetNetworkTimeout())
-	if err != nil {
-		log.Fatalf("failed to create redis client: %v", err)
-	}
-
-	// 3) Create a client and set it as the global client (optional, but convenient).
-	client := crank.NewClient(redis)
-	crank.SetGlobalClient(client)
-
-	// 4) Create the engine and register workers.
-	engine, err := crank.NewEngine(cfg, redis)
+	// 1) Create engine and client with options (or use crank.QuickStart("config/crank.yml") for YAML).
+	engine, client, err := crank.New(brokerURL,
+		crank.WithConcurrency(10),
+		crank.WithTimeout(8*time.Second),
+		crank.WithQueues(crank.QueueOption{Name: "default", Weight: 1}),
+	)
 	if err != nil {
 		log.Fatalf("failed to create engine: %v", err)
 	}
 
+	crank.SetGlobalClient(client)
 	engine.Register("EmailWorker", EmailWorker{})
 
-	// 5) Start processing jobs.
+	// 2) Start processing jobs.
 	go func() {
 		if err := engine.Start(); err != nil {
 			log.Fatalf("engine stopped with error: %v", err)
 		}
 	}()
 
-	// 6) Enqueue a job using the global helper.
+	// 3) Enqueue a job using the global helper.
 	if _, err := crank.Enqueue("EmailWorker", "default", "user-123"); err != nil {
 		log.Printf("failed to enqueue job: %v", err)
 	}
 
-	// 7) Wait for shutdown signal.
+	// 4) Wait for shutdown signal.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
@@ -124,7 +112,7 @@ func main() {
 - **Dead‑letter queue**: Jobs that exhaust their retry budget are moved to a dead queue for later inspection.
 - **Middleware chain**: Compose logging, recovery, circuit breaker, and custom cross‑cutting logic around job execution.
 - **Redaction & validation**: Built‑in tools for safe logging of arguments and validating payloads before execution.
-- **Metrics & events**: Hook into job lifecycle events via `MetricsHandler` and read aggregate stats via `GetStats`.
+- **Metrics & events**: Hook into job lifecycle events via `MetricsHandler` and read aggregate stats via `engine.Stats()`.
 
 ---
 
