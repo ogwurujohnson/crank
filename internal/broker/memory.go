@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -40,7 +41,7 @@ func (m *InMemoryBroker) Enqueue(queue string, job *payload.Job) error {
 	defer m.mu.Unlock()
 	select {
 	case <-m.done:
-		return nil
+		return fmt.Errorf("broker closed")
 	default:
 	}
 	m.queues[queue] = append(m.queues[queue], job)
@@ -94,6 +95,9 @@ func (m *InMemoryBroker) AddToRetry(job *payload.Job, retryAt time.Time) error {
 
 // GetRetryJobs returns jobs whose retry time is in the past, up to limit.
 func (m *InMemoryBroker) GetRetryJobs(limit int64) ([]*payload.Job, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
@@ -132,6 +136,9 @@ func (m *InMemoryBroker) GetDeadJobs(limit int64) ([]*payload.Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	n := int(limit)
+	if n < 0 {
+		n = 0
+	}
 	if n > len(m.dead) {
 		n = len(m.dead)
 	}

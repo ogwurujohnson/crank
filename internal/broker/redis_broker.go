@@ -133,6 +133,12 @@ func (r *RedisBroker) AddToRetry(job *payload.Job, retryAt time.Time) error {
 }
 
 func (r *RedisBroker) GetRetryJobs(limit int64) ([]*payload.Job, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
 	now := float64(time.Now().Unix())
 	result, err := r.client.ZRangeByScore(r.ctx, "retry", &redis.ZRangeBy{
 		Min: "0", Max: fmt.Sprintf("%.0f", now), Offset: 0, Count: limit,
@@ -175,6 +181,12 @@ func (r *RedisBroker) AddToDead(job *payload.Job) error {
 }
 
 func (r *RedisBroker) GetDeadJobs(limit int64) ([]*payload.Job, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
 	result, err := r.client.ZRevRange(r.ctx, "dead", 0, limit-1).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dead jobs: %w", err)

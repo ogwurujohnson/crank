@@ -242,7 +242,11 @@ func (p *Processor) retryLoop() {
 		case <-p.ctx.Done():
 			return
 		case <-ticker.C:
-			jobs, _ := p.broker.GetRetryJobs(100)
+			jobs, err := p.broker.GetRetryJobs(100)
+			if err != nil {
+				p.log.Warn("get retry jobs failed", "err", err)
+				continue
+			}
 			for _, j := range jobs {
 				// Re-enqueue logic
 				if err := p.broker.RemoveFromRetry(j); err == nil {

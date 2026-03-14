@@ -89,6 +89,9 @@ func buildConfig(o options, brokerURL string) *config.Config {
 	if len(qc) == 0 {
 		qc = []config.QueueConfig{{Name: "default", Weight: 1}}
 	}
+	if concurrency > 10000 {
+		concurrency = 10000
+	}
 	redisTimeoutSec := int(o.redisTimeout.Seconds())
 	if redisTimeoutSec <= 0 {
 		redisTimeoutSec = 5

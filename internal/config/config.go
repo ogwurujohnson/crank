@@ -3,10 +3,16 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	maxConcurrency = 10000
+	maxTimeoutSec  = 86400 // 24 hours
 )
 
 type Logger interface {
@@ -102,6 +108,10 @@ type RedisConfig struct {
 }
 
 func Load(path string) (*Config, error) {
+	cleaned := filepath.Clean(path)
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("failed to read config file: path must not be a traversal (..)")
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
@@ -151,11 +161,17 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config: unknown broker %q (use redis, nats, or rabbitmq)", cfg.Broker)
 	}
 
-	if cfg.Concurrency == 0 {
+	if cfg.Concurrency <= 0 {
 		cfg.Concurrency = 10
 	}
-	if cfg.Timeout == 0 {
+	if cfg.Concurrency > maxConcurrency {
+		cfg.Concurrency = maxConcurrency
+	}
+	if cfg.Timeout <= 0 {
 		cfg.Timeout = 8
+	}
+	if cfg.Timeout > maxTimeoutSec {
+		cfg.Timeout = maxTimeoutSec
 	}
 
 	return &cfg, nil

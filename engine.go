@@ -76,12 +76,17 @@ func (e *Engine) Use(middleware ...Middleware) {
 }
 
 func (e *Engine) Register(className string, worker Worker) {
+	if className == "" {
+		return
+	}
 	e.registry.register(className, worker)
 }
 
 func (e *Engine) RegisterMany(workers map[string]Worker) {
 	for name, worker := range workers {
-		e.registry.register(name, worker)
+		if name != "" {
+			e.registry.register(name, worker)
+		}
 	}
 }
 
