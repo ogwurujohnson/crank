@@ -142,5 +142,8 @@ See `crank_test.go` in the repo for full examples.
 | [docs/enqueueing.md](docs/enqueueing.md) | Client, `Enqueue` / `EnqueueWithOptions`, global helpers, `Job` and `JobOptions`. |
 | [docs/configuration.md](docs/configuration.md) | YAML config: `broker`, `broker_url`, `redis`, `nats`, queues, timeouts. |
 | [docs/advanced.md](docs/advanced.md) | Validation, redaction, circuit breaker, metrics events, and stats. |
+| [SECURITY.md](SECURITY.md) | Security considerations: config path, TLS, redaction, queue names, reporting. |
 
 All public types and functions live in `github.com/ogwurujohnson/crank`.
+
+**Maintainer:** ogwurujohnson@gmail.com
