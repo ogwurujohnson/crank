@@ -3,58 +3,73 @@ package payload
 import (
 	"regexp"
 	"testing"
-
-	qt "github.com/frankban/quicktest"
 )
 
 func TestMaxArgsCount(t *testing.T) {
-	c := qt.New(t)
 	v := MaxArgsCount(2)
 	job := NewJob("W", "q", 1, 2)
-	c.Assert(v.Validate(job), qt.IsNil)
+	if err := v.Validate(job); err != nil {
+		t.Errorf("Validate(2 args) = %v, want nil", err)
+	}
 	job.Args = append(job.Args, 3)
-	c.Assert(v.Validate(job), qt.IsNotNil)
+	if err := v.Validate(job); err == nil {
+		t.Error("Validate(3 args) = nil, want error")
+	}
 }
 
 func TestClassAllowlist(t *testing.T) {
-	c := qt.New(t)
 	v := ClassAllowlist(map[string]bool{"A": true, "B": true})
 	job := NewJob("A", "q")
-	c.Assert(v.Validate(job), qt.IsNil)
+	if err := v.Validate(job); err != nil {
+		t.Errorf("Validate(A) = %v, want nil", err)
+	}
 	job.Class = "C"
-	c.Assert(v.Validate(job), qt.IsNotNil)
+	if err := v.Validate(job); err == nil {
+		t.Error("Validate(C) = nil, want error")
+	}
 }
 
 func TestClassPattern(t *testing.T) {
-	c := qt.New(t)
 	re := regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 	v := ClassPattern(re)
 	job := NewJob("ValidWorker", "q")
-	c.Assert(v.Validate(job), qt.IsNil)
+	if err := v.Validate(job); err != nil {
+		t.Errorf("Validate(ValidWorker) = %v, want nil", err)
+	}
 	job.Class = "bad-class"
-	c.Assert(v.Validate(job), qt.IsNotNil)
+	if err := v.Validate(job); err == nil {
+		t.Error("Validate(bad-class) = nil, want error")
+	}
 }
 
 func TestMaxPayloadSize(t *testing.T) {
-	c := qt.New(t)
 	v := MaxPayloadSize(500)
 	job := NewJob("W", "q", "small")
-	c.Assert(v.Validate(job), qt.IsNil)
+	if err := v.Validate(job); err != nil {
+		t.Errorf("Validate(small) = %v, want nil", err)
+	}
 	job.Args = []interface{}{string(make([]byte, 600))}
-	c.Assert(v.Validate(job), qt.IsNotNil)
+	if err := v.Validate(job); err == nil {
+		t.Error("Validate(large) = nil, want error")
+	}
 }
 
 func TestChainValidator(t *testing.T) {
-	c := qt.New(t)
 	chain := ChainValidator{
 		MaxArgsCount(2),
 		ClassAllowlist(map[string]bool{"W": true}),
 	}
 	job := NewJob("W", "q", 1, 2)
-	c.Assert(chain.Validate(job), qt.IsNil)
+	if err := chain.Validate(job); err != nil {
+		t.Errorf("Validate(valid) = %v, want nil", err)
+	}
 	job.Class = "X"
-	c.Assert(chain.Validate(job), qt.IsNotNil)
+	if err := chain.Validate(job); err == nil {
+		t.Error("Validate(wrong class) = nil, want error")
+	}
 	job.Class = "W"
 	job.Args = []interface{}{1, 2, 3}
-	c.Assert(chain.Validate(job), qt.IsNotNil)
+	if err := chain.Validate(job); err == nil {
+		t.Error("Validate(too many args) = nil, want error")
+	}
 }

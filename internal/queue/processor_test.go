@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	qt "github.com/frankban/quicktest"
 	"github.com/ogwurujohnson/crank/internal/config"
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
@@ -66,10 +65,18 @@ type metricsChanHandler struct{ ch chan JobEvent }
 
 func (h metricsChanHandler) HandleJobEvent(_ context.Context, e JobEvent) { h.ch <- e }
 
+func sliceContains[T comparable](s []T, v T) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
 // --- Tests ---
 
 func TestNewProcessor_Configuration(t *testing.T) {
-	c := qt.New(t)
 	b := &spyBroker{}
 
 	t.Run("WeightedQueues", func(t *testing.T) {
@@ -79,18 +86,27 @@ func TestNewProcessor_Configuration(t *testing.T) {
 				{Name: "default", Weight: 1},
 			},
 		}, b, nil, nil)
-		c.Assert(p.queues, qt.DeepEquals, []string{"critical", "critical", "default"})
+		want := []string{"critical", "critical", "default"}
+		if len(p.queues) != len(want) {
+			t.Fatalf("queues length = %d, want %d", len(p.queues), len(want))
+		}
+		for i := range want {
+			if p.queues[i] != want[i] {
+				t.Errorf("queues[%d] = %q, want %q", i, p.queues[i], want[i])
+			}
+		}
 	})
 
 	t.Run("DefaultQueueFallback", func(t *testing.T) {
 		p, _ := NewProcessor(&config.Config{}, b, nil, nil)
-		c.Assert(p.queues, qt.DeepEquals, []string{"default"})
+		want := []string{"default"}
+		if len(p.queues) != 1 || p.queues[0] != "default" {
+			t.Errorf("queues = %v, want %v", p.queues, want)
+		}
 	})
 }
 
 func TestProcessor_ExecutionFlow(t *testing.T) {
-	c := qt.New(t)
-
 	setup := func(w Worker) (*Processor, *spyBroker) {
 		b := &spyBroker{}
 		p, _ := NewProcessor(&config.Config{Timeout: 1}, b, fixedRegistry{w: w}, nil)
@@ -103,12 +119,15 @@ func TestProcessor_ExecutionFlow(t *testing.T) {
 
 		p.processJob(j, "default")
 
-		c.Assert(b.retry, qt.HasLen, 1)
-		c.Assert(j.State, qt.Equals, payload.JobStateFailed)
-		// Check exponential backoff (2^1 = 2s)
-		c.Assert(b.retryAt[0], qt.Satisfies, func(t time.Time) bool {
-			return t.After(time.Now())
-		})
+		if len(b.retry) != 1 {
+			t.Errorf("len(retry) = %d, want 1", len(b.retry))
+		}
+		if j.State != payload.JobStateFailed {
+			t.Errorf("State = %q, want %q", j.State, payload.JobStateFailed)
+		}
+		if len(b.retryAt) > 0 && !b.retryAt[0].After(time.Now()) {
+			t.Error("retryAt should be in the future (exponential backoff)")
+		}
 	})
 
 	t.Run("MovesToDeadWhenExhausted", func(t *testing.T) {
@@ -117,14 +136,16 @@ func TestProcessor_ExecutionFlow(t *testing.T) {
 
 		p.processJob(j, "default")
 
-		c.Assert(b.dead, qt.HasLen, 1)
-		c.Assert(j.State, qt.Equals, payload.JobStateDead)
+		if len(b.dead) != 1 {
+			t.Errorf("len(dead) = %d, want 1", len(b.dead))
+		}
+		if j.State != payload.JobStateDead {
+			t.Errorf("State = %q, want %q", j.State, payload.JobStateDead)
+		}
 	})
 }
 
 func TestProcessor_Lifecycle(t *testing.T) {
-	c := qt.New(t)
-
 	t.Run("RetryLoopIntegration", func(t *testing.T) {
 		job := payload.NewJob("W", "critical", 1)
 		b := &spyBroker{retryJobs: []*payload.Job{job}}
@@ -133,18 +154,22 @@ func TestProcessor_Lifecycle(t *testing.T) {
 		p.wg.Add(1)
 		go p.retryLoop()
 
-		// Wait for one retry tick to run
 		time.Sleep(50 * time.Millisecond)
 		p.Stop()
 
-		c.Assert(len(b.removed) > 0, qt.IsTrue)
-		c.Assert(b.enqNames, qt.Contains, "critical")
-		c.Assert(job.State, qt.Equals, payload.JobStatePending)
+		if len(b.removed) == 0 {
+			t.Error("expected at least one removed from retry")
+		}
+		if !sliceContains(b.enqNames, "critical") {
+			t.Errorf("enqNames = %v, want to contain critical", b.enqNames)
+		}
+		if job.State != payload.JobStatePending {
+			t.Errorf("job.State = %q, want %q", job.State, payload.JobStatePending)
+		}
 	})
 }
 
 func TestProcessor_Metrics(t *testing.T) {
-	c := qt.New(t)
 	b := &spyBroker{}
 	p, _ := NewProcessor(&config.Config{Concurrency: 1}, b, fixedRegistry{
 		w: workerFunc(func(context.Context, ...interface{}) error { return nil }),
@@ -168,8 +193,12 @@ func TestProcessor_Metrics(t *testing.T) {
 		}
 	}
 
-	c.Assert(received, qt.Contains, EventJobStarted)
-	c.Assert(received, qt.Contains, EventJobSucceeded)
+	if !sliceContains(received, EventJobStarted) {
+		t.Errorf("received = %v, want to contain EventJobStarted", received)
+	}
+	if !sliceContains(received, EventJobSucceeded) {
+		t.Errorf("received = %v, want to contain EventJobSucceeded", received)
+	}
 
 	p.Stop()
 }

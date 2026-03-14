@@ -2,10 +2,11 @@ package queue
 
 import (
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
-	qt "github.com/frankban/quicktest"
 	"github.com/ogwurujohnson/crank/internal/broker"
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
@@ -38,7 +39,6 @@ func (m *mockBroker) Close() error                               { return nil }
 var _ broker.Broker = (*mockBroker)(nil)
 
 func TestGetStats_Valid(t *testing.T) {
-	c := qt.New(t)
 	b := &mockBroker{
 		stats: map[string]interface{}{
 			"processed": int64(10),
@@ -48,17 +48,21 @@ func TestGetStats_Valid(t *testing.T) {
 		},
 	}
 	stats, err := GetStats(b)
-	c.Assert(err, qt.IsNil)
-	c.Assert(stats, qt.DeepEquals, &Stats{
+	if err != nil {
+		t.Fatalf("GetStats: %v", err)
+	}
+	want := &Stats{
 		Processed: 10,
 		Retry:     1,
 		Dead:      0,
 		Queues:    map[string]int64{"default": 5, "low": 2},
-	})
+	}
+	if !reflect.DeepEqual(stats, want) {
+		t.Errorf("GetStats() = %+v, want %+v", stats, want)
+	}
 }
 
 func TestGetStats_IntAndFloat64(t *testing.T) {
-	c := qt.New(t)
 	b := &mockBroker{
 		stats: map[string]interface{}{
 			"processed": float64(100),
@@ -71,35 +75,47 @@ func TestGetStats_IntAndFloat64(t *testing.T) {
 		},
 	}
 	stats, err := GetStats(b)
-	c.Assert(err, qt.IsNil)
-	c.Assert(stats, qt.DeepEquals, &Stats{
+	if err != nil {
+		t.Fatalf("GetStats: %v", err)
+	}
+	want := &Stats{
 		Processed: 100,
 		Retry:     2,
 		Dead:      1,
 		Queues:    map[string]int64{"default": 3, "low": 1},
-	})
+	}
+	if !reflect.DeepEqual(stats, want) {
+		t.Errorf("GetStats() = %+v, want %+v", stats, want)
+	}
 }
 
 func TestGetStats_BrokerError(t *testing.T) {
-	c := qt.New(t)
 	b := &mockBroker{err: errors.New("broker down")}
 	_, err := GetStats(b)
-	c.Assert(err, qt.ErrorMatches, "broker down")
+	if err == nil {
+		t.Fatal("GetStats: expected error")
+	}
+	if !strings.Contains(err.Error(), "broker down") {
+		t.Errorf("err = %q, want substring %q", err.Error(), "broker down")
+	}
 }
 
 func TestGetStats_MissingKey(t *testing.T) {
-	c := qt.New(t)
 	b := &mockBroker{
 		stats: map[string]interface{}{
 			"processed": int64(1),
 		},
 	}
 	_, err := GetStats(b)
-	c.Assert(err, qt.ErrorMatches, `stats: missing or nil "retry"`)
+	if err == nil {
+		t.Fatal("GetStats: expected error")
+	}
+	if !strings.Contains(err.Error(), `stats: missing or nil "retry"`) {
+		t.Errorf("err = %q, want substring %q", err.Error(), `stats: missing or nil "retry"`)
+	}
 }
 
 func TestGetStats_InvalidType(t *testing.T) {
-	c := qt.New(t)
 	b := &mockBroker{
 		stats: map[string]interface{}{
 			"processed": int64(1),
@@ -109,11 +125,15 @@ func TestGetStats_InvalidType(t *testing.T) {
 		},
 	}
 	_, err := GetStats(b)
-	c.Assert(err, qt.ErrorMatches, `stats: "queues" is not a map`)
+	if err == nil {
+		t.Fatal("GetStats: expected error")
+	}
+	if !strings.Contains(err.Error(), `stats: "queues" is not a map`) {
+		t.Errorf("err = %q, want substring %q", err.Error(), `stats: "queues" is not a map`)
+	}
 }
 
 func TestGetStats_NilValue(t *testing.T) {
-	c := qt.New(t)
 	b := &mockBroker{
 		stats: map[string]interface{}{
 			"processed": nil,
@@ -123,5 +143,10 @@ func TestGetStats_NilValue(t *testing.T) {
 		},
 	}
 	_, err := GetStats(b)
-	c.Assert(err, qt.ErrorMatches, `stats: missing or nil "processed"`)
+	if err == nil {
+		t.Fatal("GetStats: expected error")
+	}
+	if !strings.Contains(err.Error(), `stats: missing or nil "processed"`) {
+		t.Errorf("err = %q, want substring %q", err.Error(), `stats: missing or nil "processed"`)
+	}
 }

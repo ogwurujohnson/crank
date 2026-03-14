@@ -2,15 +2,13 @@ package queue
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
-	qt "github.com/frankban/quicktest"
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
 func TestChain_Wrap_Order(t *testing.T) {
-	c := qt.New(t)
-
 	var got []string
 	chain := NewChain()
 
@@ -37,6 +35,11 @@ func TestChain_Wrap_Order(t *testing.T) {
 	})
 
 	err := h(context.Background(), payload.NewJob("W", "q"))
-	c.Assert(err, qt.IsNil)
-	c.Assert(got, qt.DeepEquals, []string{"a1", "b1", "final", "b2", "a2"})
+	if err != nil {
+		t.Fatalf("handler = %v, want nil", err)
+	}
+	want := []string{"a1", "b1", "final", "b2", "a2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
+	}
 }
