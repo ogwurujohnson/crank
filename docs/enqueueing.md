@@ -1,8 +1,17 @@
-## Enqueueing Jobs
+# Enqueueing Jobs
 
-This document covers the client‑side API for enqueueing jobs into Crank, including method signatures, parameters, and error patterns.
+This document covers the client-side API for enqueueing jobs: the `Client` type, `Enqueue` / `EnqueueWithOptions`, global helpers, and error handling. All types and functions are in `github.com/ogwurujohnson/crank`.
 
-All types and functions referenced here are available through the top‑level `github.com/ogwurujohnson/crank` package (they are re‑exports of the internal SDK and payload packages).
+---
+
+## Getting a Client
+
+You do **not** construct a broker or client in isolation. You obtain a **client** from:
+
+- **`crank.New(brokerURL, opts...)`** – returns `(engine, client, err)`. Use `client` to enqueue.
+- **`crank.QuickStart(configPath)`** – returns `(engine, client, err)` and also calls `SetGlobalClient(client)`.
+
+There is no public broker type; the broker is chosen by URL (e.g. `redis://...`) or by config (`broker: redis`). The **Client** is the only type you use to push jobs.
 
 ---
 
@@ -12,51 +21,31 @@ All types and functions referenced here are available through the top‑level `g
 
 ```go
 type Client struct {
-    // wraps an internal broker.Broker
+    // opaque; holds the broker internally
 }
 ```
 
-Created via:
-
-```go
-func NewClient(b Broker) *Client
-```
-
-- **Parameters**
-  - `b Broker` (**required**): a broker implementation, typically a Redis broker created with `NewRedisClient` or `NewRedisClientWithConfig`.
-- **Behavior**
-  - `Client` is a thin wrapper around the broker that constructs `Job` payloads with sensible defaults and pushes them to the configured Redis queues.
+Obtained only as the second return value of `New` or `QuickStart`.
 
 ### `type Job`
 
 ```go
 type Job struct {
-    JID        string                 `json:"jid"`
-    Class      string                 `json:"class"`
-    Args       []interface{}          `json:"args"`
-    Queue      string                 `json:"queue"`
-    Retry      int                    `json:"retry"`
-    RetryCount int                    `json:"retry_count"`
-    CreatedAt  float64                `json:"created_at"`
-    EnqueuedAt float64                `json:"enqueued_at"`
-    Backtrace  bool                   `json:"backtrace"`
-    State      JobState               `json:"state,omitempty"`
-    Metadata   map[string]interface{} `json:"metadata,omitempty"`
+    JID        string
+    Class      string
+    Args       []interface{}
+    Queue      string
+    Retry      int
+    RetryCount int
+    CreatedAt  float64
+    EnqueuedAt float64
+    Backtrace  bool
+    State      JobState
+    Metadata   map[string]interface{}
 }
 ```
 
-Created via:
-
-```go
-func NewJob(workerClass string, queue string, args ...interface{}) *Job
-```
-
-- **Defaults**
-  - `Retry`: **5** attempts.
-  - `RetryCount`: `0` at creation.
-  - `Backtrace`: `false`.
-  - `State`: `JobStatePending`.
-  - `Metadata`: initialized to an empty map.
+Jobs are created internally when you call `Enqueue` or `EnqueueWithOptions`. You can use `*Job` in validators and middleware. Defaults at creation: `Retry: 5`, `RetryCount: 0`, `Backtrace: false`, `State: JobStatePending`, `Metadata: map[]`.
 
 ### `type JobOptions`
 
@@ -67,12 +56,12 @@ type JobOptions struct {
 }
 ```
 
-- **Retry** (optional): maximum number of attempts, including the first run. When `nil`, the default (5) from `NewJob` is used.
-- **Backtrace** (optional): whether to capture extended backtrace information. When `nil`, defaults to `false`.
+- **Retry**: max attempts (including first run). `nil` → use default (5).
+- **Backtrace**: whether to capture extended backtrace. `nil` → false.
 
 ---
 
-## Client Methods
+## Client methods
 
 ### `func (c *Client) Enqueue`
 
@@ -80,27 +69,19 @@ type JobOptions struct {
 func (c *Client) Enqueue(workerClass string, queue string, args ...interface{}) (string, error)
 ```
 
-- **Parameters**
-  - `workerClass` (**required**): name of the worker class to execute (e.g. `"EmailWorker"`). This must match the string used when registering the worker with the engine.
-  - `queue` (**required**): name of the target queue (e.g. `"default"`, `"critical"`).
-  - `args` (**optional**): variadic list of arguments passed to the worker’s `Perform` method.
-- **Returns**
-  - `string`: the generated job ID (`jid`).
-  - `error`: non‑`nil` when the job could not be enqueued.
-- **Error behavior**
-  - Wraps broker errors as:
-    - `failed to enqueue job: <underlying error>`
-  - Does not validate `workerClass` or `args` at enqueue time beyond basic serialization; validation is performed when the job is processed.
+- **workerClass**: Must match a registered worker name (e.g. `"EmailWorker"`).
+- **queue**: Queue name (e.g. `"default"`, `"critical"`). Must match a queue known to the engine (from options or config).
+- **args**: Variadic arguments passed to `worker.Perform(ctx, args...)`.
+- **Returns**: Job ID (`jid`) and an error. Errors are typically broker/connectivity failures.
 
 **Example**
 
 ```go
-client := crank.NewClient(redisBroker)
+engine, client, _ := crank.New("redis://localhost:6379/0", crank.WithQueues(crank.QueueOption{Name: "default", Weight: 1}))
 jid, err := client.Enqueue("EmailWorker", "default", "user-123")
 if err != nil {
-    log.Printf("failed to enqueue job: %v", err)
+    log.Printf("enqueue failed: %v", err)
 }
-log.Printf("enqueued job %s", jid)
 ```
 
 ### `func (c *Client) EnqueueWithOptions`
@@ -114,49 +95,21 @@ func (c *Client) EnqueueWithOptions(
 ) (string, error)
 ```
 
-- **Parameters**
-  - `workerClass` (**required**): worker class name.
-  - `queue` (**required**): queue name.
-  - `options` (**optional**):
-    - When non‑`nil`, overrides default retry and backtrace behavior.
-    - When `nil`, defaults from `NewJob` are used.
-  - `args` (**optional**): arguments passed to the worker.
-- **Returns**
-  - `string`: job ID.
-  - `error`: enqueuing error, if any.
-- **Behavior**
-  - Constructs a `Job` via `NewJob`.
-  - Applies:
-    - `SetRetry(*options.Retry)` when `options` and `options.Retry` are non‑`nil`.
-    - `SetBacktrace(*options.Backtrace)` when `options` and `options.Backtrace` are non‑`nil`.
-  - Enqueues the job via the underlying broker.
+Same as `Enqueue`, but applies `options` when non-nil: `Retry` and/or `Backtrace` override job defaults.
 
 **Example**
 
 ```go
 retries := 10
-backtrace := true
-opts := &crank.JobOptions{
-    Retry:     &retries,
-    Backtrace: &backtrace,
-}
-
-jid, err := client.EnqueueWithOptions(
-    "ReportWorker",
-    "reports",
-    opts,
-    2024, "quarter-1",
-)
-if err != nil {
-    log.Printf("failed to enqueue report job: %v", err)
-}
+opts := &crank.JobOptions{Retry: &retries}
+jid, err := client.EnqueueWithOptions("ReportWorker", "reports", opts, 2024, "q1")
 ```
 
 ---
 
-## Global Enqueue Helpers
+## Global enqueue helpers
 
-Crank provides convenience functions that use a globally configured client. This can be useful in larger applications where jobs are enqueued from many different packages.
+After calling `SetGlobalClient(client)`, you can enqueue from anywhere without passing the client.
 
 ### `func SetGlobalClient`
 
@@ -164,10 +117,7 @@ Crank provides convenience functions that use a globally configured client. This
 func SetGlobalClient(c *Client)
 ```
 
-- **Parameters**
-  - `c` (**required**): the client instance to be used by global helpers.
-- **Behavior**
-  - Stores `c` in a package‑level variable. Subsequent calls to `Enqueue` / `EnqueueWithOptions` (global variants) will use this client.
+Sets the client used by the global `Enqueue` and `EnqueueWithOptions` functions. `QuickStart` does this for you.
 
 ### `func GetGlobalClient`
 
@@ -175,23 +125,17 @@ func SetGlobalClient(c *Client)
 func GetGlobalClient() *Client
 ```
 
-- **Returns**
-  - The current global client, or `nil` if none has been configured.
+Returns the current global client, or `nil` if never set.
 
-### `func Enqueue`
+### `func Enqueue` (global)
 
 ```go
 func Enqueue(workerClass string, queue string, args ...interface{}) (string, error)
 ```
 
-- **Behavior**
-  - Delegates to `globalClient.Enqueue`.
-- **Error behavior**
-  - Returns an error if the global client has not been initialized:
-    - `global client not initialized. Call SetGlobalClient first`
-  - Otherwise, returns the same errors as `Client.Enqueue`.
+Equivalent to `GetGlobalClient().Enqueue(...)`. Returns an error if the global client is nil: `global client not initialized. Call SetGlobalClient first`.
 
-### `func EnqueueWithOptions`
+### `func EnqueueWithOptions` (global)
 
 ```go
 func EnqueueWithOptions(
@@ -202,83 +146,35 @@ func EnqueueWithOptions(
 ) (string, error)
 ```
 
-- **Behavior**
-  - Delegates to `globalClient.EnqueueWithOptions`.
-- **Error behavior**
-  - Returns an error if the global client has not been initialized:
-    - `global client not initialized. Call SetGlobalClient first`
-  - Otherwise, returns the same errors as `Client.EnqueueWithOptions`.
+Same as above for the options variant.
 
-**Example: global client pattern**
+**Example**
 
 ```go
-// Somewhere in your service bootstrap:
-cfg, err := crank.LoadConfig("config/crank.yml")
-if err != nil {
-    log.Fatalf("failed to load config: %v", err)
-}
-
-redis, err := crank.NewRedisClient(cfg.Redis.URL, cfg.Redis.GetNetworkTimeout())
-if err != nil {
-    log.Fatalf("failed to create redis client: %v", err)
-}
-
-client := crank.NewClient(redis)
+// Bootstrap (e.g. in main)
+engine, client, _ := crank.New("redis://localhost:6379/0", ...)
 crank.SetGlobalClient(client)
+engine.Start()
 
-// Later, in any package:
-func EnqueueWelcomeEmail(userID string) error {
-    _, err := crank.Enqueue("EmailWorker", "default", userID)
-    return err
-}
+// Elsewhere in the app
+jid, err := crank.Enqueue("EmailWorker", "default", userID)
 ```
 
 ---
 
-## JSON Helpers
-
-Crank exposes helpers to convert jobs to and from JSON.
-
-### `func (j *Job) ToJSON`
+## JSON helpers
 
 ```go
 func (j *Job) ToJSON() ([]byte, error)
-```
-
-- Serializes the job to JSON.
-- Returns an error if serialization fails.
-
-### `func FromJSON`
-
-```go
 func FromJSON(data []byte) (*Job, error)
 ```
 
-- **Parameters**
-  - `data` (**required**): JSON bytes representing a job.
-- **Behavior**
-  - Unmarshals JSON into a `Job`.
-  - When `state` is omitted or empty, defaults it to `JobStatePending`.
-- **Error behavior**
-  - Returns an error wrapped as:
-    - `failed to unmarshal job: <underlying error>`
+Use when you need to serialize or deserialize jobs (e.g. in middleware or tests). `FromJSON` defaults `State` to `JobStatePending` when missing.
 
 ---
 
-## Enqueue‑Side Error Handling Patterns
+## Error handling
 
-When working with the enqueueing API, you should be prepared to handle:
-
-- **Configuration errors**
-  - Failures when constructing the broker (e.g. invalid Redis URL) will surface before you create the `Client`.
-- **Broker connectivity errors**
-  - Transient Redis issues during `Enqueue` or `EnqueueWithOptions` result in wrapped errors such as:
-    - `failed to enqueue job: dial tcp ...`
-- **Global client misuse**
-  - Calling the global helpers before `SetGlobalClient` yields:
-    - `global client not initialized. Call SetGlobalClient first`
-- **Payload serialization issues**
-  - Rare in practice (args are stored as generic interfaces), but will surface as standard JSON marshaling errors from `ToJSON` / `FromJSON`.
-
-In all cases, the enqueueing API follows idiomatic Go practice: operations return an `error` and do not panic. Your application should log and/or retry based on its own policies.
-
+- **Broker/connectivity**: Enqueue can fail if the broker is unreachable or the URL is invalid. Errors are returned (e.g. `failed to enqueue job: ...`). Create the engine/client at startup and handle errors there; retry or back off as needed.
+- **Global client**: Calling `Enqueue` or `EnqueueWithOptions` without having called `SetGlobalClient` returns `global client not initialized. Call SetGlobalClient first`.
+- **Validation**: Job validation runs at **execution** time, not at enqueue time. Invalid jobs will fail in the worker and go through the normal retry/dead path.

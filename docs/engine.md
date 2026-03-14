@@ -1,42 +1,102 @@
-## Engine & Workers
+# Engine & Workers
 
-This document describes how to configure and run the Crank engine, define workers, register them, and reason about runtime behavior and errors.
-
-All symbols are exposed via `github.com/ogwurujohnson/crank`.
+This document describes how to create and run the Crank engine, define workers, register them, and reason about runtime behavior and errors. All symbols are exposed via `github.com/ogwurujohnson/crank`.
 
 ---
 
-## Core Types
+## Creating the Engine
 
-### `type Engine`
+You create an engine and client in one of two ways: **programmatically** with `New(brokerURL, opts...)` or **from a YAML file** with `QuickStart(configPath)`.
 
-```go
-type Engine struct {
-    // created via NewEngine
-}
-```
-
-Constructed with:
+### `func New`
 
 ```go
-func NewEngine(cfg *Config, broker Broker) (*Engine, error)
+func New(brokerURL string, opts ...Option) (*Engine, *Client, error)
 ```
 
 - **Parameters**
-  - `cfg *Config` (**required**): engine configuration (see `docs/configuration.md`).
-  - `broker Broker` (**required**): backing broker (typically Redis) used to dequeue, retry, and dead‑letter jobs.
-- **Behavior**
-  - Sets a default `Logger` on `cfg` if none is provided.
-  - Creates an internal worker registry specific to the engine instance.
-  - Configures a circuit breaker (`CircuitBreaker`) and a middleware chain composed of:
-    - `RecoveryMiddleware`
-    - `LoggingMiddleware`
-    - `BreakerMiddleware`
-  - Instantiates a `Processor` and wires in the circuit breaker.
-- **Error behavior**
-  - Returns errors from `NewProcessor` when configuration is invalid or the broker cannot be used.
+  - `brokerURL` (**required**): backend URL (e.g. `redis://localhost:6379/0`). The broker type is inferred from the URL scheme unless overridden with `WithBroker("redis")` (or `nats` / `rabbitmq` when supported).
+  - `opts`: optional functional options (e.g. `WithConcurrency`, `WithTimeout`, `WithQueues`, `WithLogger`).
+- **Returns**
+  - `*Engine`: the job processor; register workers and call `Start()` / `Stop()`.
+  - `*Client`: use to enqueue jobs; you may call `SetGlobalClient(client)` so global `Enqueue` / `EnqueueWithOptions` work.
+  - `error`: non-nil if the broker cannot be created or the engine fails to initialize.
 
-#### Methods
+**Example**
+
+```go
+engine, client, err := crank.New("redis://localhost:6379/0",
+    crank.WithConcurrency(10),
+    crank.WithTimeout(8*time.Second),
+    crank.WithQueues(
+        crank.QueueOption{Name: "default", Weight: 1},
+        crank.QueueOption{Name: "critical", Weight: 5},
+    ),
+)
+if err != nil {
+    log.Fatalf("New: %v", err)
+}
+defer func() { _ = engine.Stats() } // optional: read stats
+crank.SetGlobalClient(client)
+```
+
+### `func QuickStart`
+
+```go
+func QuickStart(configPath string) (*Engine, *Client, error)
+```
+
+- **Parameters**
+  - `configPath`: path to a YAML configuration file (see `docs/configuration.md`). The file must specify `broker` (e.g. `redis`) and the matching section (e.g. `redis.url`, `redis.network_timeout`, etc.).
+- **Behavior**
+  - Loads config from the file, creates the broker (Redis today) and engine, then the client. Calls `SetGlobalClient(client)` so global enqueue helpers work.
+- **Returns**
+  - Same as `New`: `(*Engine, *Client, error)`.
+
+**Example**
+
+```go
+engine, client, err := crank.QuickStart("config/crank.yml")
+if err != nil {
+    log.Fatalf("QuickStart: %v", err)
+}
+// client is already set as global
+engine.RegisterMany(map[string]crank.Worker{
+    "EmailWorker":  EmailWorker{},
+    "ReportWorker": ReportWorker{},
+})
+if err := engine.Start(); err != nil {
+    log.Fatalf("Start: %v", err)
+}
+defer engine.Stop()
+```
+
+### `func NewTestEngine`
+
+```go
+func NewTestEngine(opts ...Option) (*Engine, *Client, *TestBroker, error)
+```
+
+- **Behavior**
+  - Builds an engine and client backed by an **in-memory broker**. No Redis or other external broker is required. Intended for tests.
+- **Returns**
+  - `*Engine`, `*Client`: same as `New`.
+  - `*TestBroker`: use `RetryJobs()`, `DeadJobs()`, and `GetEnqueuedJobs(queue)` to assert on job state in tests.
+- **Example**: see `crank_test.go` in the repo.
+
+---
+
+## Core Type: Engine
+
+```go
+type Engine struct {
+    // opaque
+}
+```
+
+Constructed only via `New`, `QuickStart`, or `NewTestEngine`.
+
+### Methods
 
 ```go
 func (e *Engine) Use(middleware ...Middleware)
@@ -44,22 +104,19 @@ func (e *Engine) Register(className string, worker Worker)
 func (e *Engine) RegisterMany(workers map[string]Worker)
 func (e *Engine) Start() error
 func (e *Engine) Stop()
+func (e *Engine) Stats() (*Stats, error)
 ```
 
-- **`Use`**
-  - Appends one or more `Middleware` instances to the engine’s middleware chain.
-  - No‑op if the internal chain is `nil` (should not occur when created via `NewEngine`).
-- **`Register`**
-  - Registers a single worker instance under the given `className`.
-  - Replaces any existing worker registration for that name.
-- **`RegisterMany`**
-  - Registers multiple workers in a single call using a `map[string]Worker`.
-- **`Start`**
-  - Starts job fetching, worker goroutines, retry processing, and optional metrics loop.
-  - Returns immediately; processing continues in background goroutines.
-  - Returns an error only if the processor fails to start; subsequent runtime errors are reported via logs, metrics, and job states rather than by returning from `Start`.
-- **`Stop`
-  - Signals all background goroutines to stop, waits for them, and logs shutdown.
+- **Use**
+  - Appends one or more middlewares to the engine’s chain (e.g. custom logging or metrics).
+- **Register / RegisterMany**
+  - Register workers under a class name. The class name must match the first argument to `Enqueue(workerClass, queue, args...)`. Replaces any existing registration for that name.
+- **Start**
+  - Starts job fetching, worker goroutines, retry loop, and optional metrics loop. Returns immediately; processing runs in the background. Returns an error only if startup fails.
+- **Stop**
+  - Signals all goroutines to stop and waits for them. Safe to call after `Start()`.
+- **Stats**
+  - Returns queue statistics (processed count, retry count, dead count, per-queue sizes). Use this instead of accessing a broker directly.
 
 ---
 
@@ -73,18 +130,13 @@ type Worker interface {
 }
 ```
 
-- **Parameters**
-  - `ctx context.Context` (**required**): per‑job context with timeout set from configuration. Workers should honor cancellation and timeouts.
-  - `args ...interface{}` (**optional**): positional arguments provided when the job was enqueued.
-- **Error behavior**
-  - Returning `nil` marks the job as successful.
-  - Returning a non‑`nil` error:
-    - Marks the job as failed for that attempt.
-    - Triggers retry logic or moves the job to the dead‑letter queue depending on `Retry` / `RetryCount`.
-    - Is logged and emitted as a `JobEvent`.
-  - Panics are recovered by `RecoveryMiddleware` and converted into errors.
+- **ctx**: per-job context with timeout from configuration. Workers should respect cancellation and deadlines.
+- **args**: the variadic arguments passed when the job was enqueued (e.g. `Enqueue("EmailWorker", "default", "user-123")` → `args` = `[]interface{}{"user-123"}`).
+- **Return**
+  - `nil`: job is considered successful.
+  - Non-nil `error`: job is failed for this attempt; triggers retry or move to dead queue depending on retry count.
 
-**Example worker**
+**Example**
 
 ```go
 type EmailWorker struct{}
@@ -97,235 +149,98 @@ func (w EmailWorker) Perform(ctx context.Context, args ...interface{}) error {
     if !ok {
         return fmt.Errorf("expected userID as string, got %T", args[0])
     }
-
-    // Simulate work; respect ctx for timeouts / cancellation.
-    if err := sendEmail(ctx, userID); err != nil {
-        return err
-    }
-    return nil
+    return sendEmail(ctx, userID)
 }
 ```
 
----
-
-## Worker Registration APIs
-
-Crank supports two registration mechanisms:
-
-- **Engine‑local registration**, recommended for most applications.
-- **Global registration**, useful for libraries or when you do not manage the engine directly.
-
-### Engine‑local registration
-
-```go
-func (e *Engine) Register(className string, worker Worker)
-func (e *Engine) RegisterMany(workers map[string]Worker)
-```
-
-- **Parameters**
-  - `className` (**required**): the string class used in `Enqueue` / `EnqueueWithOptions` (e.g. `"EmailWorker"`).
-  - `worker` (**required**): a value implementing `Worker`.
-- **Behavior**
-  - `Register` and `RegisterMany` populate an engine‑specific registry.
-  - The engine looks up workers by `job.Class` on each job execution.
-
-**Example**
+Registration:
 
 ```go
 engine.Register("EmailWorker", EmailWorker{})
-
 engine.RegisterMany(map[string]crank.Worker{
     "ReportWorker": ReportWorker{},
     "CleanupWorker": CleanupWorker{},
 })
 ```
 
-### Global worker registry
+---
+
+## Global worker registry (optional)
 
 ```go
 func RegisterWorker(className string, worker Worker)
 func ListWorkers() []string
 ```
 
-- **Behavior**
-  - `RegisterWorker` stores workers in a global map, protected by a read‑write mutex.
-  - `ListWorkers` returns the list of registered class names.
-- **When used**
-  - The `Processor` first attempts to resolve workers via the engine’s registry.
-  - If no engine registry is configured, it falls back to the global registry via `GetWorker`.
-
-**Error behavior**
-
-- When a worker cannot be found:
-
-```go
-return fmt.Errorf("worker class '%s' not found", className)
-```
-
-- At execution time, this becomes:
-
-```go
-return fmt.Errorf("worker not found: %w", err)
-```
-
-which then flows through the standard failure and retry pipeline.
+- The engine first looks up workers in its **own** registry (from `Register` / `RegisterMany`). If not found, it falls back to the **global** registry.
+- Use the global registry when you do not hold a reference to the engine (e.g. in libraries). Prefer engine-local registration for most applications.
 
 ---
 
-## Middleware & Handler Chain
+## Middleware & handler chain
 
-### Core types
+The engine wraps job execution in a chain of middlewares. Built-in: recovery (panic → error), logging (failed jobs + redacted args), circuit breaker (per class).
+
+### Types
 
 ```go
-type Handler func(ctx context.Context, job *payload.Job) error
-
+type Handler func(ctx context.Context, job *Job) error
 type Middleware func(next Handler) Handler
-
-type Chain struct {
-    middlewares []Middleware
-}
+type Chain struct { ... }
 ```
 
-#### Construction and usage
+### Adding middleware
 
 ```go
-func NewChain(ms ...Middleware) *Chain
-func (c *Chain) Use(m ...Middleware)
-func (c *Chain) Wrap(final Handler) Handler
+engine.Use(myMiddleware)
 ```
 
-- **NewChain**: builds a chain with an initial list of middlewares (outermost last).
-- **Use**: appends additional middlewares.
-- **Wrap**: applies middlewares around a `final` handler.
+Built-in middleware (already in the chain):
 
-### Built‑in middleware
-
-#### `LoggingMiddleware`
-
-```go
-func LoggingMiddleware(logger Logger) Middleware
-```
-
-- Logs job failures using a redacted view of `job.Args`.
-- Uses the current default `Redactor` to convert arguments into a safe string.
-- Does not log on success.
-
-#### `RecoveryMiddleware`
-
-```go
-func RecoveryMiddleware(logger Logger) Middleware
-```
-
-- Catches panics in downstream handlers.
-- Logs the panic value, job ID, and stack trace.
-- Converts the panic into an `error`:
-
-```go
-err = fmt.Errorf("panic: %v", panicValue)
-```
-
-#### `BreakerMiddleware`
-
-```go
-func BreakerMiddleware(breaker *CircuitBreaker) Middleware
-```
-
-- When `breaker` is `nil`, returns a pass‑through middleware.
-- When provided, it:
-  - Records failures via `breaker.RecordFailure(job.Class)`.
-  - Records successes via `breaker.RecordSuccess(job.Class)`.
-- The breaker’s state influences the fetcher: when open for a class, jobs are requeued with a short delay instead of being processed.
+- **RecoveryMiddleware(logger)** – catches panics, logs stack, converts to error.
+- **LoggingMiddleware(logger)** – logs job failures with redacted args (see redactor in `docs/advanced.md`).
+- **BreakerMiddleware(breaker)** – records success/failure per job class; used internally by the engine.
 
 ---
 
-## Runtime Flow & Error Handling
+## Runtime flow & errors
 
-### Job lifecycle within the processor
-
-1. **Fetch**
-   - Jobs are fetched from Redis via `broker.Dequeue`.
-   - If the breaker is open for the job’s class, the job is requeued and temporarily skipped.
-2. **Start event**
-   - A `JobEvent` of type `EventJobStarted` is emitted (when metrics are enabled).
-3. **Execution**
-   - A per‑job `context.Context` with timeout from `Config.GetTimeout()` is created.
-   - The middleware chain is applied around a base handler that:
-     - Runs the global `Validator` (if any).
-     - Resolves the worker.
-     - Calls `worker.Perform(ctx, job.Args...)`.
+1. **Fetch** – Jobs are dequeued from the broker (by queue weight). If the circuit breaker is open for the job’s class, the job may be requeued and skipped temporarily.
+2. **Start** – A `JobEvent` of type `EventJobStarted` can be emitted when metrics are configured.
+3. **Execute** – A context with timeout (from config) is created. The chain runs: validator (if set) → worker lookup → `worker.Perform(ctx, job.Args...)`.
 4. **Result**
-   - On success:
-     - Job state transitions to `success`.
-     - Logs a success message including duration.
-     - Emits `EventJobSucceeded`.
-   - On error (including panic converted by `RecoveryMiddleware`):
-     - Job state transitions to `failed`.
-     - Logs a failure message including duration and error.
-     - Emits `EventJobFailed`.
-     - Invokes retry handling:
-       - If `RetryCount < Retry`: schedule retry with exponential backoff.
-       - Else: mark job as `dead` and move it to the dead‑letter queue.
+   - **Success**: job state → success, log, emit `EventJobSucceeded`.
+   - **Error (or panic)**: job state → failed, log, emit `EventJobFailed`, then:
+     - If `RetryCount < Retry`: schedule retry with exponential backoff (`2^RetryCount` seconds), add to retry set.
+     - Else: set state to dead, add to dead set.
 
-### Exponential backoff and dead‑letter queue
-
-- On failure:
-  - `RetryCount` is incremented.
-  - If `RetryCount <= Retry`:
-    - Next attempt is scheduled at:
-
-```go
-backoff := time.Duration(1<<uint(job.RetryCount)) * time.Second
-retryAt := time.Now().Add(backoff)
-```
-
-    - The job is added to the retry set via `AddToRetry`.
-  - Otherwise:
-    - Job state is set to `dead`.
-    - Job is added to a dead‑letter set via `AddToDead`.
-
-Jobs in the retry set are periodically scanned and re‑enqueued. If re‑enqueue fails, they are left in the retry set and attempted again later.
-
-### Context cancellation
-
-- When the engine is stopped:
-  - The processor’s root context is cancelled.
-  - Fetchers and workers exit gracefully.
-- Individual jobs receive a `context` with a bounded deadline. Workers should:
-  - Check `ctx.Err()` where appropriate.
-  - Abort work promptly when `ctx.Done()` is closed.
+Jobs in the retry set are periodically re-enqueued. When the engine is stopped, the root context is cancelled and fetchers/workers exit.
 
 ---
 
-## Example: Engine Setup & Worker Registration
+## Example: full setup
 
 ```go
-cfg, err := crank.LoadConfig("config/crank.yml")
+engine, client, err := crank.New("redis://localhost:6379/0",
+    crank.WithConcurrency(10),
+    crank.WithTimeout(8*time.Second),
+    crank.WithQueues(crank.QueueOption{Name: "default", Weight: 1}),
+)
 if err != nil {
-    log.Fatalf("failed to load config: %v", err)
+    log.Fatalf("New: %v", err)
 }
 
-redis, err := crank.NewRedisClient(cfg.Redis.URL, cfg.Redis.GetNetworkTimeout())
-if err != nil {
-    log.Fatalf("failed to create redis client: %v", err)
-}
-
-engine, err := crank.NewEngine(cfg, redis)
-if err != nil {
-    log.Fatalf("failed to create engine: %v", err)
-}
-
+crank.SetGlobalClient(client)
 engine.RegisterMany(map[string]crank.Worker{
     "EmailWorker":  EmailWorker{},
     "ReportWorker": ReportWorker{},
 })
 
-// Optionally add custom middleware.
-engine.Use(customMiddleware)
-
 if err := engine.Start(); err != nil {
-    log.Fatalf("engine failed to start: %v", err)
+    log.Fatalf("Start: %v", err)
 }
-
 defer engine.Stop()
-```
 
+// Enqueue from anywhere
+jid, err := crank.Enqueue("EmailWorker", "default", "user-123")
+```

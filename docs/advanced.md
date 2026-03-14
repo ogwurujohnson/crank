@@ -37,7 +37,7 @@ func (f ValidatorFunc) Validate(job *Job) error
 ```go
 func SetValidator(v Validator)
 func GetValidator() Validator
-``>
+```
 
 - **Behavior**
   - `SetValidator` installs a global validator used by all processors.
@@ -261,36 +261,18 @@ The processor can emit events for:
 - `EventJobRetryScheduled`
 - `EventJobMovedToDead`
 
-### Configuring metrics on a processor
-
-```go
-func (p *Processor) SetMetricsHandler(handler MetricsHandler)
-```
-
-- **Behavior**
-  - When `handler` is non‑`nil`, the processor:
-    - Allocates an internal buffered channel for events (size proportional to concurrency, minimum 10).
-    - Starts a background metrics loop that:
-      - Receives events from the channel.
-      - Calls `handler.HandleJobEvent` with a background context.
-      - Recovers from panics inside the handler and logs a warning.
-
-> Note: `Processor` is typically constructed and managed via `Engine`. If you need direct access, you can use the exported `Processor` type alias and work with it explicitly.
+The engine’s processor emits these events internally. The `MetricsHandler` interface and event types are public for use in custom middleware or future engine APIs (e.g. `Engine.SetMetricsHandler`). For aggregate counts, use `engine.Stats()`.
 
 ### Queue statistics
 
 ```go
-type Stats struct {
-    // internal fields summarizing pending, retry, dead counts, etc.
-}
-
-func GetStats(b Broker) (Stats, error)
+func (e *Engine) Stats() (*Stats, error)
 ```
 
 - **Behavior**
-  - `GetStats` uses the broker to query queue statistics, such as counts of pending, retry, and dead jobs.
+  - Returns aggregate statistics from the broker: processed count, retry count, dead count, and per-queue sizes. Use this instead of accessing a broker directly.
 - **Error behavior**
-  - Returns an error when the broker fails to fetch statistics from Redis.
+  - Returns an error when the broker fails to return stats.
 
 **Example metrics handler**
 
