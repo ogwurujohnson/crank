@@ -2,99 +2,154 @@ package broker
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	qt "github.com/frankban/quicktest"
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
 func TestNewRedisBrokerWithConfig_EmptyURL(t *testing.T) {
-	c := qt.New(t)
-
 	_, err := NewRedisBrokerWithConfig(RedisBrokerConfig{})
-	c.Assert(err, qt.ErrorMatches, `broker not available: Redis URL is empty .*`)
+	if err == nil {
+		t.Fatal("expected error for empty URL")
+	}
+	if !strings.Contains(err.Error(), "broker not available") || !strings.Contains(err.Error(), "Redis URL is empty") {
+		t.Errorf("err = %q, want message about empty Redis URL", err.Error())
+	}
 }
 
 func TestRedisBroker_EnqueueDequeue(t *testing.T) {
-	c := qt.New(t)
-
 	s := miniredis.RunT(t)
 	r, err := NewRedisBroker(fmt.Sprintf("redis://%s/0", s.Addr()), time.Second)
-	c.Assert(err, qt.IsNil)
+	if err != nil {
+		t.Fatalf("NewRedisBroker: %v", err)
+	}
 	t.Cleanup(func() { _ = r.Close() })
 
 	j := payload.NewJob("W", "default", 1, "two")
-	c.Assert(r.Enqueue("default", j), qt.IsNil)
+	if err := r.Enqueue("default", j); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
 
 	got, q, err := r.Dequeue([]string{"default"}, time.Second)
-	c.Assert(err, qt.IsNil)
-	c.Assert(q, qt.Equals, "default")
-	c.Assert(got.JID, qt.Equals, j.JID)
-	c.Assert(got.Class, qt.Equals, j.Class)
-	c.Assert(got.Queue, qt.Equals, j.Queue)
+	if err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+	if q != "default" {
+		t.Errorf("queue = %q, want default", q)
+	}
+	if got.JID != j.JID {
+		t.Errorf("JID = %q, want %q", got.JID, j.JID)
+	}
+	if got.Class != j.Class {
+		t.Errorf("Class = %q, want %q", got.Class, j.Class)
+	}
+	if got.Queue != j.Queue {
+		t.Errorf("Queue = %q, want %q", got.Queue, j.Queue)
+	}
 }
 
 func TestRedisBroker_RetryLifecycle(t *testing.T) {
-	c := qt.New(t)
-
 	s := miniredis.RunT(t)
 	r, err := NewRedisBroker(fmt.Sprintf("redis://%s/0", s.Addr()), time.Second)
-	c.Assert(err, qt.IsNil)
+	if err != nil {
+		t.Fatalf("NewRedisBroker: %v", err)
+	}
 	t.Cleanup(func() { _ = r.Close() })
 
 	j := payload.NewJob("W", "default", 1)
-	c.Assert(r.AddToRetry(j, time.Now().Add(-1*time.Second)), qt.IsNil)
+	if err := r.AddToRetry(j, time.Now().Add(-1*time.Second)); err != nil {
+		t.Fatalf("AddToRetry: %v", err)
+	}
 
 	jobs, err := r.GetRetryJobs(10)
-	c.Assert(err, qt.IsNil)
-	c.Assert(len(jobs), qt.Equals, 1)
-	c.Assert(jobs[0].JID, qt.Equals, j.JID)
+	if err != nil {
+		t.Fatalf("GetRetryJobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("len(GetRetryJobs) = %d, want 1", len(jobs))
+	}
+	if jobs[0].JID != j.JID {
+		t.Errorf("JID = %q, want %q", jobs[0].JID, j.JID)
+	}
 
-	c.Assert(r.RemoveFromRetry(jobs[0]), qt.IsNil)
+	if err := r.RemoveFromRetry(jobs[0]); err != nil {
+		t.Fatalf("RemoveFromRetry: %v", err)
+	}
 	jobs, err = r.GetRetryJobs(10)
-	c.Assert(err, qt.IsNil)
-	c.Assert(len(jobs), qt.Equals, 0)
+	if err != nil {
+		t.Fatalf("GetRetryJobs: %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Errorf("len(GetRetryJobs) after remove = %d, want 0", len(jobs))
+	}
 }
 
 func TestRedisBroker_DeadLifecycle(t *testing.T) {
-	c := qt.New(t)
-
 	s := miniredis.RunT(t)
 	r, err := NewRedisBroker(fmt.Sprintf("redis://%s/0", s.Addr()), time.Second)
-	c.Assert(err, qt.IsNil)
+	if err != nil {
+		t.Fatalf("NewRedisBroker: %v", err)
+	}
 	t.Cleanup(func() { _ = r.Close() })
 
 	j := payload.NewJob("W", "default", 1)
-	c.Assert(r.AddToDead(j), qt.IsNil)
+	if err := r.AddToDead(j); err != nil {
+		t.Fatalf("AddToDead: %v", err)
+	}
 
 	jobs, err := r.GetDeadJobs(10)
-	c.Assert(err, qt.IsNil)
-	c.Assert(len(jobs) >= 1, qt.IsTrue)
-	c.Assert(jobs[0].JID, qt.Equals, j.JID)
+	if err != nil {
+		t.Fatalf("GetDeadJobs: %v", err)
+	}
+	if len(jobs) < 1 {
+		t.Fatalf("len(GetDeadJobs) = %d, want at least 1", len(jobs))
+	}
+	if jobs[0].JID != j.JID {
+		t.Errorf("JID = %q, want %q", jobs[0].JID, j.JID)
+	}
 }
 
 func TestRedisBroker_GetStats(t *testing.T) {
-	c := qt.New(t)
-
 	s := miniredis.RunT(t)
 	r, err := NewRedisBroker(fmt.Sprintf("redis://%s/0", s.Addr()), time.Second)
-	c.Assert(err, qt.IsNil)
+	if err != nil {
+		t.Fatalf("NewRedisBroker: %v", err)
+	}
 	t.Cleanup(func() { _ = r.Close() })
 
-	c.Assert(r.Enqueue("default", payload.NewJob("W", "default", 1)), qt.IsNil)
-	c.Assert(r.AddToRetry(payload.NewJob("W", "default", 2), time.Now().Add(-1*time.Second)), qt.IsNil)
-	c.Assert(r.AddToDead(payload.NewJob("W", "default", 3)), qt.IsNil)
+	if err := r.Enqueue("default", payload.NewJob("W", "default", 1)); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if err := r.AddToRetry(payload.NewJob("W", "default", 2), time.Now().Add(-1*time.Second)); err != nil {
+		t.Fatalf("AddToRetry: %v", err)
+	}
+	if err := r.AddToDead(payload.NewJob("W", "default", 3)); err != nil {
+		t.Fatalf("AddToDead: %v", err)
+	}
 
 	stats, err := r.GetStats()
-	c.Assert(err, qt.IsNil)
+	if err != nil {
+		t.Fatalf("GetStats: %v", err)
+	}
 
-	c.Assert(stats["processed"], qt.Equals, int64(1))
-	c.Assert(stats["retry"], qt.Equals, int64(1))
-	c.Assert(stats["dead"], qt.Equals, int64(1))
+	if stats["processed"] != int64(1) {
+		t.Errorf("processed = %v, want 1", stats["processed"])
+	}
+	if stats["retry"] != int64(1) {
+		t.Errorf("retry = %v, want 1", stats["retry"])
+	}
+	if stats["dead"] != int64(1) {
+		t.Errorf("dead = %v, want 1", stats["dead"])
+	}
 
 	qs, ok := stats["queues"].(map[string]int64)
-	c.Assert(ok, qt.IsTrue)
-	c.Assert(qs["default"], qt.Equals, int64(1))
+	if !ok {
+		t.Fatalf("queues type = %T, want map[string]int64", stats["queues"])
+	}
+	if qs["default"] != 1 {
+		t.Errorf("queues[default] = %d, want 1", qs["default"])
+	}
 }

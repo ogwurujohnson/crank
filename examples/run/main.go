@@ -1,3 +1,13 @@
+// This example runs the Crank engine with two demo workers. Use it as a reference
+// for the fluent API: New(brokerURL, opts...) and optional QuickStart(configPath).
+//
+// Run from the repo root:
+//
+//	go run ./examples/run
+//
+// Or with a config file (QuickStart):
+//
+//	go run ./examples/run -C config/crank.yml
 package main
 
 import (
@@ -8,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/ogwurujohnson/crank"
 )
@@ -34,32 +45,35 @@ func (reportWorker) Perform(ctx context.Context, args ...interface{}) error {
 
 func main() {
 	var configPath string
-	flag.StringVar(&configPath, "C", "config/crank.yml", "Path to configuration file")
+	var useConfig bool
+	flag.StringVar(&configPath, "C", "config/crank.yml", "Path to configuration file (used if -config is set)")
+	flag.BoolVar(&useConfig, "config", false, "Use YAML config file instead of New(brokerURL, opts...)")
 	flag.Parse()
 
-	config, err := crank.LoadConfig(configPath)
-	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+	var engine *crank.Engine
+	var client *crank.Client
+	var err error
+
+	if useConfig {
+		engine, client, err = crank.QuickStart(configPath)
+	} else {
+		brokerURL := os.Getenv("REDIS_URL")
+		if brokerURL == "" {
+			brokerURL = "redis://localhost:6379/0"
+		}
+		engine, client, err = crank.New(brokerURL,
+			crank.WithConcurrency(2),
+			crank.WithTimeout(10*time.Second),
+			crank.WithQueues(
+				crank.QueueOption{Name: "default", Weight: 1},
+			),
+		)
 	}
-
-	redis, err := crank.NewRedisClientWithConfig(crank.RedisBrokerConfig{
-		URL:                   config.Redis.URL,
-		Timeout:               config.Redis.GetNetworkTimeout(),
-		UseTLS:                config.Redis.UseTLS,
-		TLSInsecureSkipVerify: config.Redis.TLSInsecureSkipVerify,
-	})
-	if err != nil {
-		log.Fatalf("Failed to connect to Redis: %v", err)
-	}
-	defer redis.Close()
-
-	client := crank.NewClient(redis)
-	crank.SetGlobalClient(client)
-
-	engine, err := crank.NewEngine(config, redis)
 	if err != nil {
 		log.Fatalf("Failed to create engine: %v", err)
 	}
+
+	crank.SetGlobalClient(client)
 
 	engine.RegisterMany(map[string]crank.Worker{
 		"EmailWorker":  emailWorker{},
@@ -70,7 +84,7 @@ func main() {
 		log.Fatalf("Failed to start engine: %v", err)
 	}
 
-	log.Println("Crank started. Press Ctrl+C to stop.")
+	log.Println("Crank example started. Press Ctrl+C to stop.")
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)

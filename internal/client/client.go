@@ -1,4 +1,4 @@
-package sdk
+package client
 
 import (
 	"fmt"
@@ -7,23 +7,21 @@ import (
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
-var (
-	globalClient *Client
-)
+var globalClient *Client
 
 type Client struct {
 	broker broker.Broker
 }
 
-func NewClient(b broker.Broker) *Client {
+func New(b broker.Broker) *Client {
 	return &Client{broker: b}
 }
 
-func SetGlobalClient(c *Client) {
+func SetGlobal(c *Client) {
 	globalClient = c
 }
 
-func GetGlobalClient() *Client {
+func GetGlobal() *Client {
 	return globalClient
 }
 

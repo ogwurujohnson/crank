@@ -3,9 +3,16 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	maxConcurrency = 10000
+	maxTimeoutSec  = 86400 // 24 hours
 )
 
 type Logger interface {
@@ -15,13 +22,33 @@ type Logger interface {
 	Error(msg string, args ...any)
 }
 
+// Config holds engine and broker configuration.
+// Broker selection is via Broker (e.g. "redis", "nats", "rabbitmq"); the matching
+// section (Redis, NATS, etc.) must be non-empty and provide URL and options.
 type Config struct {
-	Concurrency int           `yaml:"concurrency"`
-	Queues      []QueueConfig `yaml:"queues"`
-	Timeout     int           `yaml:"timeout"`
-	Verbose     bool          `yaml:"verbose"`
-	Redis       RedisConfig   `yaml:"redis"`
-	Logger      Logger        `yaml:"-"`
+	Broker            string        `yaml:"broker"`     // "redis", "nats", "rabbitmq". Default "redis".
+	BrokerURL         string        `yaml:"broker_url"` // optional fallback URL when backend's url is empty
+	Concurrency       int           `yaml:"concurrency"`
+	Queues            []QueueConfig `yaml:"queues"`
+	Timeout           int           `yaml:"timeout"`
+	Verbose           bool          `yaml:"verbose"`
+	Redis             RedisConfig   `yaml:"redis"` // required when broker is "redis"
+	NATS              NATSConfig    `yaml:"nats"`  // required when broker is "nats"
+	Logger            Logger        `yaml:"-"`
+	RetryPollInterval time.Duration `yaml:"-"` // optional; 0 means default 5s (used by tests)
+}
+
+// NATSConfig holds NATS connection options. Used when broker is "nats".
+type NATSConfig struct {
+	URL     string `yaml:"url"`
+	Timeout int    `yaml:"timeout"` // connection timeout in seconds; 0 = default 5
+}
+
+func (c *NATSConfig) GetTimeout() time.Duration {
+	if c.Timeout <= 0 {
+		return 5 * time.Second
+	}
+	return time.Duration(c.Timeout) * time.Second
 }
 
 // QueueConfig: YAML accepts [name, weight] or {name, weight, priority}. Priority reserved.
@@ -81,6 +108,10 @@ type RedisConfig struct {
 }
 
 func Load(path string) (*Config, error) {
+	cleaned := filepath.Clean(path)
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("failed to read config file: path must not be a traversal (..)")
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
@@ -91,20 +122,56 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	if cfg.Concurrency == 0 {
-		cfg.Concurrency = 10
+	// Normalize broker kind; default to redis
+	cfg.Broker = strings.TrimSpace(strings.ToLower(cfg.Broker))
+	if cfg.Broker == "" {
+		cfg.Broker = "redis"
 	}
-	if cfg.Timeout == 0 {
-		cfg.Timeout = 8
-	}
-	if cfg.Redis.URL == "" {
-		cfg.Redis.URL = os.Getenv("REDIS_URL")
+
+	switch cfg.Broker {
+	case "redis":
+		if cfg.Redis.URL == "" {
+			cfg.Redis.URL = cfg.BrokerURL
+		}
+		if cfg.Redis.URL == "" {
+			cfg.Redis.URL = os.Getenv("REDIS_URL")
+		}
 		if cfg.Redis.URL == "" {
 			cfg.Redis.URL = "redis://localhost:6379/0"
 		}
+		if cfg.Redis.NetworkTimeout == 0 {
+			cfg.Redis.NetworkTimeout = 5
+		}
+	case "nats":
+		if cfg.NATS.URL == "" {
+			cfg.NATS.URL = cfg.BrokerURL
+		}
+		if cfg.NATS.URL == "" {
+			cfg.NATS.URL = os.Getenv("NATS_URL")
+		}
+		if cfg.NATS.URL == "" {
+			return nil, fmt.Errorf("config: broker is %q but nats.url (or broker_url) is empty", cfg.Broker)
+		}
+		if cfg.NATS.Timeout == 0 {
+			cfg.NATS.Timeout = 5
+		}
+	case "rabbitmq":
+		return nil, fmt.Errorf("config: broker %q is not yet implemented", cfg.Broker)
+	default:
+		return nil, fmt.Errorf("config: unknown broker %q (use redis, nats, or rabbitmq)", cfg.Broker)
 	}
-	if cfg.Redis.NetworkTimeout == 0 {
-		cfg.Redis.NetworkTimeout = 5
+
+	if cfg.Concurrency <= 0 {
+		cfg.Concurrency = 10
+	}
+	if cfg.Concurrency > maxConcurrency {
+		cfg.Concurrency = maxConcurrency
+	}
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = 8
+	}
+	if cfg.Timeout > maxTimeoutSec {
+		cfg.Timeout = maxTimeoutSec
 	}
 
 	return &cfg, nil

@@ -1,23 +1,10 @@
-# Crank
+# Crank Go SDK
 
-A sidekiq motivated high-performance background job processor for Go. Uses a broker abstraction (Redis by default), a managed worker pool, and channel-based backpressure so the processor never pulls work faster than workers can handle.
+Crank is a background job processing SDK for Go. It lets your applications enqueue jobs to named queues, run worker processes that execute those jobs concurrently, and observe execution via middleware, validation, and metrics hooks. You use a single package: `github.com/ogwurujohnson/crank`.
 
-## Features
+Broker backends are pluggable: **Redis** is supported today; **NATS** and **RabbitMQ** are reserved for future implementations. You choose the broker via configuration (`broker: redis` in YAML) or by passing a URL to `New()` (e.g. `redis://localhost:6379/0`). The SDK is inspired by systems like Sidekiq/Resque but is designed to feel idiomatic in Go.
 
-- **Broker abstraction** — Enqueue, Dequeue, Ack, retry/dead sets, and stats behind an interface (Redis included; others pluggable)
-- **Worker pool + backpressure** — One fetcher dequeues into an unbuffered channel; N workers receive and process. When all workers are busy, the fetcher blocks so no new jobs are pulled until a worker is free
-- **Redis-backed queue** — Weighted queues, automatic retries with exponential backoff, dead job set; stats discover all queues via `queue:*` keys
-- **Web UI** — Stats, queue sizes, retry and dead job listing (JSON), and clear-queue; broker passed per mount (no global state)
-- **Middleware** — Chain hooks around job execution (logging, metrics, redaction)
-- **Structured logging** — Optional `Logger` interface (slog-style: `Debug`, `Info`, `Warn`, `Error`); engine logs start/stop, job fetched, success/failure with job ID and error. Nil defaults to no-op; no third-party log dependency in the core SDK.
-- **Security** — Optional payload validation, argument redaction for logs, TLS for Redis; protect clear-queue in production (auth/CSRF)
-- **YAML configuration** — Queues (name + weight), concurrency, timeouts, Redis URL and TLS options
-- **Production-ready** — Graceful shutdown (SIGTERM/SIGINT), job timeouts, DLQ, safe stats parsing (no panics on broker response)
-
-## Requirements
-
-- Go 1.21+
-- Redis 7.0+ (or compatible: Valkey, Dragonfly)
+---
 
 ## Installation
 
@@ -25,450 +12,138 @@ A sidekiq motivated high-performance background job processor for Go. Uses a bro
 go get github.com/ogwurujohnson/crank
 ```
 
-## Architecture
-
-The codebase is organized around a **broker-based** design with a single public package and internal layout:
-
-```
-github.com/ogwurujohnson/crank/
-├── crank.go                # Public API (re-exports)
-├── engine.go               # Engine (processor + worker registry)
-├── cmd/crank/              # Optional: standalone worker binary
-├── internal/
-│   ├── broker/             # Broker interface + Redis implementation
-│   ├── config/             # YAML config, queue weights, Redis/TLS options
-│   ├── payload/            # Job struct, serialization, validator, redactor
-│   └── queue/              # Processor (worker pool), Queue, Worker registry, middleware
-├── pkg/sdk/                # Client for enqueueing jobs
-└── web/                    # Web UI (stats, queues, clear)
+```go
+import "github.com/ogwurujohnson/crank"
 ```
 
-- **Producer**: Your app (or `examples/simple_worker`, `examples/web_server`) uses the **Client** to enqueue jobs; the client talks to the **Broker** (e.g. Redis).
-- **Broker**: Interface for Enqueue, Dequeue, Ack, retry/dead sets, and stats. Default implementation is **Redis** (`NewRedisClient` / `NewRedisClientWithConfig`). Redis stats discover queue names via `KEYS queue:*`.
-- **Consumer**: The **Processor** runs one **fetcher** goroutine that dequeues and sends to an unbuffered **job channel**, and N **worker** goroutines that receive and process. When all workers are busy, the fetcher blocks on send (backpressure). Payload validation and middleware run before dispatching to registered **Worker** implementations; retries and dead jobs are handled automatically. Run via `cmd/crank` or by starting the processor inside your own binary.
-
-Data flow:
-
-```
-Enqueue:  Client.Enqueue() → Broker.Enqueue() → Redis LPUSH queue:{name}
-Process:  Fetcher → Broker.Dequeue() (BRPOP) → jobCh (blocks if all workers busy) → Worker → validate → middleware → Worker.Perform()
-Failure:  Broker.AddToRetry() (backoff) or Broker.AddToDead() (DLQ)
-```
+---
 
 ## Quick Start
 
-### 1. Define a worker and enqueue jobs (producer)
+Create an engine and client with the fluent API, or use a YAML config file.
+
+**Programmatic (recommended)**
 
 ```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"log"
-	"time"
-
-	"github.com/ogwurujohnson/crank"
+engine, client, err := crank.New("redis://localhost:6379/0",
+    crank.WithConcurrency(10),
+    crank.WithTimeout(8*time.Second),
+    crank.WithQueues(crank.QueueOption{Name: "default", Weight: 1}),
 )
-
-type EmailWorker struct{}
-
-func (w *EmailWorker) Perform(ctx context.Context, args ...interface{}) error {
-	if len(args) < 1 {
-		return fmt.Errorf("expected at least 1 argument")
-	}
-	userID, ok := args[0].(float64) // JSON numbers unmarshal as float64
-	if !ok {
-		return fmt.Errorf("invalid user ID type")
-	}
-	fmt.Printf("Sending email to user %.0f\n", userID)
-	// Your logic here
-	return nil
-}
-
-func main() {
-	redis, err := crank.NewRedisClient("redis://localhost:6379/0", 5*time.Second)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer redis.Close()
-
-	client := crank.NewClient(redis)
-	crank.SetGlobalClient(client)
-	crank.RegisterWorker("EmailWorker", &EmailWorker{})
-
-	jid, err := crank.Enqueue("EmailWorker", "default", 123)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("Enqueued job: %s\n", jid)
-}
-```
-
-### 2. Run the worker process (consumer)
-
-Use the standalone worker (loads config and starts the Engine):
-
-```bash
-# Ensure Redis is running, then:
-go run ./cmd/crank/ -C config/crank.yml
-```
-
-Or build and run:
-
-```bash
-make build
-./bin/crank -C config/crank.yml
-```
-
-### 3. Configuration
-
-The library does **not** read any config file automatically. You create a `*crank.Config` by either:
-
-- **`crank.LoadConfig(path)`** — load from a YAML file (any path you choose)
-- **Build it in code** — construct `crank.Config` manually and pass it to `NewEngine`
-
-You do **not** need to provide `config/crank.yml` in your project. That path is just the default used by `cmd/crank` when you run `./bin/crank -C config/crank.yml`. You can use another path, another config format, or no file at all.
-
-Example YAML format (for use with `LoadConfig`):
-
-```yaml
-concurrency: 10
-queues:
-  - [critical, 5]
-  - [default, 3]
-  - [low, 1]
-timeout: 8
-verbose: true
-redis:
-  url: redis://localhost:6379/0
-  network_timeout: 5
-  # use_tls: true
-  # tls_insecure_skip_verify: false  # dev only
-```
-
-- `concurrency`: Number of worker goroutines that process jobs (and the effective backpressure limit).
-- `queues`: Name and weight; higher weight = more polling share (e.g. `[critical, 5]` gets more fetcher attention than `[low, 1]`). The `priority` field is parsed from YAML but reserved for future use.
-- `timeout`: Job execution timeout in seconds.
-- `redis.url`: Overridable by `REDIS_URL`. Use `rediss://` or set `use_tls: true` for TLS.
-
-**Logging:** Set `Config.Logger` to a value implementing `crank.Logger` (methods: `Debug`, `Info`, `Warn`, `Error` with `msg string, args ...any`). If nil, the engine uses a no-op logger. Use `crank.NopLogger()` explicitly or plug in stdlib `log/slog` via a small adapter (see below).
-
-**Config without a file:**
-
-```go
-config := &crank.Config{
-	Concurrency: 10,
-	Timeout:     8,
-	Queues:      []crank.QueueConfig{{Name: "default", Weight: 1}},
-	Redis: crank.RedisConfig{
-		URL:            os.Getenv("REDIS_URL"),
-		NetworkTimeout: 5,
-	},
-	Logger: crank.NopLogger(), // or your slog adapter; nil => no-op
-}
-engine, _ := crank.NewEngine(config, broker)
-```
-
-## Example usage
-
-### Enqueue with options
-
-```go
-jid, err := crank.EnqueueWithOptions("EmailWorker", "critical", &crank.JobOptions{
-	Retry:     intPtr(3),
-	Backtrace: boolPtr(true),
-}, 789)
-```
-
-### Web UI (same broker as client)
-
-The Web UI is mounted with `web.Mount(router, path, broker)`. The broker is passed into every handler via closure, so you can mount multiple Crank UIs with different brokers on the same router.
-
-**Endpoints** (under the mount path, e.g. `/crank`):
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Dashboard (stats + queues) |
-| `/stats` | GET | JSON: `processed`, `retry`, `dead`, `queues` |
-| `/queues` | GET | JSON: queue name → size |
-| `/retries` | GET | JSON: `count`, `jobs` (retry set) |
-| `/dead` | GET | JSON: `count`, `jobs` (dead set) |
-| `/queues/{queue}/clear` | POST | Clear the named queue (destructive) |
-
-```go
-import (
-	"github.com/gorilla/mux"
-	"github.com/ogwurujohnson/crank/web"
-)
-
-router := mux.NewRouter()
-web.Mount(router, "/crank", redis) // redis implements crank.Broker
-// Visit http://localhost:8080/crank for dashboard, stats, retries, dead jobs, and queue management
-```
-
-**Production:** The clear-queue endpoint is destructive. Protect the Crank UI (e.g. with auth middleware or CSRF) or expose it only on trusted networks.
-
-### Run the engine inside your app
-
-```go
-config, _ := crank.LoadConfig("config/crank.yml")
-broker, _ := crank.NewRedisClient(config.Redis.URL, config.Redis.GetNetworkTimeout())
-defer broker.Close()
-
-engine, _ := crank.NewEngine(config, broker)
-engine.RegisterMany(map[string]crank.Worker{
-	"EmailWorker": &EmailWorker{},
-})
-// or engine.Register("EmailWorker", &EmailWorker{}) for a single worker
-if err := engine.Start(); err != nil {
-	panic(err)
+if err != nil {
+    log.Fatalf("failed to create engine: %v", err)
 }
 defer engine.Stop()
 
-// Your HTTP server or other work here
-```
+crank.SetGlobalClient(client)
+engine.Register("EmailWorker", EmailWorker{})
 
-### Metrics sidecar with Prometheus
-
-Crank exposes a non-blocking internal event bus via `crank.MetricsHandler`. Workers emit `JobEvent`s into a buffered channel; a background goroutine calls your handler. If your metrics backend is slow, events are dropped rather than blocking job execution.
-
-```go
-import (
-	"context"
-	"net/http"
-	"time"
-
-	"github.com/ogwurujohnson/crank"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-)
-
-var (
-	jobDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name: "crank_job_duration_seconds",
-			Help: "Time spent executing jobs.",
-			// Buckets: prometheus.DefBuckets, or tune for your workloads.
-		},
-		[]string{"class", "queue", "state"},
-	)
-	jobTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "crank_jobs_total",
-			Help: "Total number of processed jobs.",
-		},
-		[]string{"class", "queue", "state"},
-	)
-)
-
-func init() {
-	prometheus.MustRegister(jobDuration, jobTotal)
+if err := engine.Start(); err != nil {
+    log.Fatalf("engine start: %v", err)
 }
 
-type promMetrics struct{}
+// Enqueue jobs
+jid, _ := crank.Enqueue("EmailWorker", "default", "user-123")
+```
 
-func (promMetrics) HandleJobEvent(ctx context.Context, e crank.JobEvent) {
-	class := e.Job.Class
-	queue := e.Queue
+**From YAML config**
 
-	switch e.Type {
-	case crank.EventJobStarted:
-		// optional: track in-flight gauge
-	case crank.EventJobSucceeded:
-		jobDuration.WithLabelValues(class, queue, "success").Observe(e.Duration.Seconds())
-		jobTotal.WithLabelValues(class, queue, "success").Inc()
-	case crank.EventJobFailed:
-		jobDuration.WithLabelValues(class, queue, "failed").Observe(e.Duration.Seconds())
-		jobTotal.WithLabelValues(class, queue, "failed").Inc()
-	case crank.EventJobRetryScheduled:
-		jobTotal.WithLabelValues(class, queue, "retry_scheduled").Inc()
-	case crank.EventJobMovedToDead:
-		jobTotal.WithLabelValues(class, queue, "dead").Inc()
-	}
+```go
+engine, client, err := crank.QuickStart("config/crank.yml")
+if err != nil {
+    log.Fatalf("QuickStart: %v", err)
 }
-
-func main() {
-	config, _ := crank.LoadConfig("config/crank.yml")
-	broker, _ := crank.NewRedisClient(config.Redis.URL, config.Redis.GetNetworkTimeout())
-	defer broker.Close()
-
-	engine, _ := crank.NewEngine(config, broker)
-	engine.SetMetricsHandler(promMetrics{})
-
-	// Expose Prometheus metrics on /metrics
-	http.Handle("/metrics", promhttp.Handler())
-	go http.ListenAndServe(":2112", nil)
-
-	if err := engine.Start(); err != nil {
-		panic(err)
-	}
-	defer engine.Stop()
-
-	select {} // your app logic here
-}
+// QuickStart already calls SetGlobalClient(client)
+engine.Register("EmailWorker", EmailWorker{})
+engine.Start()
 ```
 
-### Structured logging (engine)
+---
 
-The engine logs start/stop, job fetched, and job success/failure (with job ID and error) via `Config.Logger`. If nil, it uses a no-op logger. Use stdlib `log/slog` with a thin adapter:
+## Example runner
 
-```go
-import "log/slog"
+The repo includes an example that runs two demo workers (EmailWorker, ReportWorker). From the **repo root**:
 
-type slogAdapter struct{ *slog.Logger }
-
-func (a slogAdapter) Debug(msg string, args ...any) { a.Logger.Debug(msg, args...) }
-func (a slogAdapter) Info(msg string, args ...any)  { a.Logger.Info(msg, args...) }
-func (a slogAdapter) Warn(msg string, args ...any)  { a.Logger.Warn(msg, args...) }
-func (a slogAdapter) Error(msg string, args ...any) { a.Logger.Error(msg, args...) }
-
-config := &crank.Config{ /* ... */ Logger: slogAdapter{Logger: slog.Default()} }
-engine, _ := crank.NewEngine(config, broker)
-```
-
-To disable engine logging, set `config.Logger = crank.NopLogger()` or leave it nil.
-
-### Middleware (pre-compiled onion)
-
-Middleware uses an onion/decorator pattern:
-
-- `crank.Handler`: `func(ctx context.Context, job *crank.Job) error`
-- `crank.Middleware`: `func(next crank.Handler) crank.Handler`
-
-The engine composes the middleware stack once at startup and reuses the baked handler for every job.
-
-Attach middleware per engine:
-
-```go
-engine, _ := crank.NewEngine(config, broker)
-
-engine.Use(crank.LoggingMiddleware(config.Logger))
-engine.Use(func(next crank.Handler) crank.Handler {
-	return func(ctx context.Context, job *crank.Job) error {
-		start := time.Now()
-		err := next(ctx, job)
-		config.Logger.Info("job timing", "jid", job.JID, "duration", time.Since(start))
-		return err
-	}
-})
-```
-
-Built-ins:
-
-- `crank.LoggingMiddleware(logger crank.Logger)`: logs job failures with redacted args.
-- `crank.RecoveryMiddleware(logger crank.Logger)`: catches panics, logs a stack trace, and converts the panic into an error so the job can be retried or moved to dead.
-
-### Payload validation and redaction
-
-```go
-// Validate job class and arg count (treat payload as untrusted)
-crank.SetValidator(crank.ChainValidator{
-	crank.SafeClassPattern(),
-	crank.MaxArgsCount(10),
-})
-
-// Redact sensitive args in logs (default is masking)
-crank.SetRedactor(crank.NewFieldMaskingRedactor([]string{"password", "token"}))
-```
-
-### Queue and stats
-
-```go
-queue := crank.NewQueue("default", broker)
-size, _ := queue.Size()
-_ = queue.Clear()
-
-stats, _ := crank.GetStats(broker)
-fmt.Printf("Processed: %d, Retry: %d, Dead: %d\n", stats.Processed, stats.Retry, stats.Dead)
-// stats.Queues is map[string]int64 (Redis discovers queues via queue:* keys)
-```
-
-`GetStats` parses broker responses safely (handles `int`, `int64`, `float64`, and `map[string]int64` or `map[string]interface{}` for queues) and returns an error instead of panicking on invalid data.
-
-### Custom broker
-
-You can use your own backend by implementing the `crank.Broker` interface. All entry points accept any `Broker`: `NewClient(broker)`, `NewEngine(config, broker)`, `NewQueue(name, broker)`, `GetStats(broker)`, and `web.Mount(router, path, broker)`.
-
-Implement these methods (job types use `*crank.Job`):
-
-| Method | Purpose |
-|--------|--------|
-| `Enqueue(queue string, job *Job) error` | Push a job onto the named queue |
-| `Dequeue(queues []string, timeout time.Duration) (*Job, string, error)` | Block until a job is available from any of the queues; return job and queue name |
-| `Ack(job *Job) error` | Optional: acknowledge after process (Redis uses no-op; at-most-once brokers can use this) |
-| `AddToRetry(job *Job, retryAt time.Time) error` | Schedule job for retry at given time |
-| `GetRetryJobs(limit int64) ([]*Job, error)` | Return jobs whose retry time has passed |
-| `RemoveFromRetry(job *Job) error` | Remove job from retry set (before re-enqueue) |
-| `AddToDead(job *Job) error` | Move job to dead set after max retries |
-| `GetDeadJobs(limit int64) ([]*Job, error)` | Return jobs from the dead set (for UI/inspection) |
-| `GetQueueSize(queue string) (int64, error)` | Queue length for stats/UI |
-| `DeleteKey(key string) error` | Delete a key (e.g. for queue clear; key format is `queue:{name}` for the default) |
-| `GetStats() (map[string]interface{}, error)` | Return `processed`, `retry`, `dead` (int64), and `queues` (map of queue name → size). Consumers should parse safely; see `queue.GetStats`. |
-| `Close() error` | Release connections/resources |
-
-Example: plugging a custom broker into the client and engine:
-
-```go
-type MyBroker struct { /* your backend client */ }
-
-func (b *MyBroker) Enqueue(queue string, job *crank.Job) error { /* ... */ }
-func (b *MyBroker) Dequeue(queues []string, timeout time.Duration) (*crank.Job, string, error) { /* ... */ }
-func (b *MyBroker) Ack(job *crank.Job) error { return nil }
-func (b *MyBroker) AddToRetry(job *crank.Job, retryAt time.Time) error { /* ... */ }
-func (b *MyBroker) GetRetryJobs(limit int64) ([]*crank.Job, error) { /* ... */ }
-func (b *MyBroker) RemoveFromRetry(job *crank.Job) error { /* ... */ }
-func (b *MyBroker) AddToDead(job *crank.Job) error { /* ... */ }
-func (b *MyBroker) GetDeadJobs(limit int64) ([]*crank.Job, error) { /* ... */ }
-func (b *MyBroker) GetQueueSize(queue string) (int64, error) { /* ... */ }
-func (b *MyBroker) DeleteKey(key string) error { /* ... */ }
-func (b *MyBroker) GetStats() (map[string]interface{}, error) { /* ... */ }
-func (b *MyBroker) Close() error { return nil }
-
-// Use it like Redis
-broker := &MyBroker{}
-client := crank.NewClient(broker)
-engine, _ := crank.NewEngine(config, broker)
-```
-
-## Examples in this repo
-
-| Example | Description |
+| Command | Description |
 |--------|-------------|
-| `examples/simple_worker/` | Enqueues jobs; run a worker process separately to consume them. |
-| `examples/web_server/` | HTTP server that enqueues jobs and mounts the Crank Web UI (stats, queues, retries, dead, clear). |
+| `go run ./examples/run` | Run with **fluent API**: uses `REDIS_URL` (default `redis://localhost:6379/0`), concurrency 2, timeout 10s, queue `default`. |
+| `go run ./examples/run -config` | Run with **YAML config**: loads `config/crank.yml` (see `-C` to change path). |
+| `go run ./examples/run -config -C path/to/crank.yml` | Same as `-config` but use a custom config file. |
 
-Run the simple enqueue example (then start the worker in another terminal):
+**Flags**
+
+- **`-config`**  
+  Use YAML configuration instead of the fluent API. If not set, the example uses `crank.New(brokerURL, opts...)` with defaults.
+
+- **`-C`**  
+  Path to the YAML config file. Used only when `-config` is set. Default: `config/crank.yml`.
+
+**Build and run a binary**
 
 ```bash
-go run ./examples/simple_worker/
+go build -o crank-example ./examples/run
+./crank-example                    # fluent API, default Redis URL
+./crank-example -config            # config file
+./crank-example -config -C my.yml  # custom config path
 ```
 
-Run the web example (UI at `/crank`, enqueue via `POST /api/jobs?user_id=123`):
+---
 
-```bash
-go run ./examples/web_server/
+## Testing without Redis
+
+Use the in-memory broker for database-free tests:
+
+```go
+engine, client, tb, err := crank.NewTestEngine(
+    crank.WithConcurrency(2),
+    crank.WithTimeout(5*time.Second),
+)
+if err != nil {
+    t.Fatalf("NewTestEngine: %v", err)
+}
+
+engine.Register("MyWorker", myWorker{})
+engine.Start()
+defer engine.Stop()
+
+client.Enqueue("MyWorker", "default", "arg1")
+// ... run job ...
+
+// Inspect retry/dead/enqueued state
+retry := tb.RetryJobs()
+dead := tb.DeadJobs()
+enqueued := tb.GetEnqueuedJobs("default")
 ```
 
-## Deployment
+See `crank_test.go` in the repo for full examples.
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for systemd, Docker, Kubernetes, and production notes.
+---
 
-## Comparison with Sidekiq (Ruby)
+## Features
 
-| Feature | Sidekiq (Ruby) | Crank |
-|--------|-----------------|------------|
-| Language | Ruby | Go |
-| Concurrency | Threads | Goroutines + worker pool with backpressure |
-| Broker | Redis | Broker interface (Redis default) |
-| Deployment | Ruby stack | Single Go binary |
-| Backpressure | — | Unbuffered channel; fetcher blocks when workers saturated |
+- **Pluggable brokers**: Redis today; broker chosen by config (`broker: redis`) or URL scheme. NATS/RabbitMQ reserved for future use.
+- **Fluent API**: `New(brokerURL, opts...)` with `WithConcurrency`, `WithTimeout`, `WithQueues`, `WithLogger`, `WithBroker`, etc.
+- **YAML config**: `QuickStart(path)` loads `broker`, `broker_url`, `redis`/`nats` sections, queues, timeouts, concurrency.
+- **Workers**: Implement `crank.Worker` (e.g. `Perform(ctx, args...) error`); register with `engine.Register` or `engine.RegisterMany`.
+- **Queues**: Named queues with weights; engine polls by weight. Default queue: `default`.
+- **Retries & dead queue**: Exponential backoff; configurable retry count per job; jobs that exhaust retries move to a dead set.
+- **Middleware**: Built-in recovery, logging, circuit breaker; add more with `engine.Use(middleware)`.
+- **Validation & redaction**: Optional global validator and redactor for job args (see `docs/advanced.md`).
+- **Stats**: `engine.Stats()` returns processed, retry, dead, and per-queue sizes.
+- **Global client**: `SetGlobalClient(client)` then `crank.Enqueue(...)` / `crank.EnqueueWithOptions(...)` from anywhere.
 
-## License
+---
 
-MIT
+## Documentation
 
-## References
+| Document | Description |
+|----------|-------------|
+| [docs/engine.md](docs/engine.md) | Engine, workers, registration, middleware, retries, and lifecycle. |
+| [docs/enqueueing.md](docs/enqueueing.md) | Client, `Enqueue` / `EnqueueWithOptions`, global helpers, `Job` and `JobOptions`. |
+| [docs/configuration.md](docs/configuration.md) | YAML config: `broker`, `broker_url`, `redis`, `nats`, queues, timeouts. |
+| [docs/advanced.md](docs/advanced.md) | Validation, redaction, circuit breaker, metrics events, and stats. |
+| [SECURITY.md](SECURITY.md) | Security considerations: config path, TLS, redaction, queue names, reporting. |
 
-- [Sidekiq (Ruby)](https://github.com/sidekiq/sidekiq)
-- [Sidekiq wiki](https://github.com/sidekiq/sidekiq/wiki)
+All public types and functions live in `github.com/ogwurujohnson/crank`.
+
+**Maintainer:** ogwurujohnson@gmail.com

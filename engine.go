@@ -41,10 +41,12 @@ type Engine struct {
 	chain     *queue.Chain
 }
 
-func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
+// newEngine creates an Engine from internal config and broker. Used by New and QuickStart.
+func newEngine(cfg *config.Config, b broker.Broker) (*Engine, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = queue.NopLogger()
 	}
+
 	registry := &engineRegistry{workers: make(map[string]queue.Worker)}
 	breaker := queue.NewCircuitBreaker(queue.BreakerConfig{})
 	chain := queue.NewChain(
@@ -52,35 +54,39 @@ func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
 		queue.LoggingMiddleware(cfg.Logger),
 		queue.BreakerMiddleware(breaker),
 	)
-	processor, err := queue.NewProcessorWithChain(cfg, broker, registry, chain)
+	processor, err := queue.NewProcessor(cfg, b, registry, chain)
 	if err != nil {
 		return nil, err
 	}
-	processor.SetCircuitBreaker(breaker)
 
 	return &Engine{
 		cfg:       cfg,
-		broker:    broker,
+		broker:    b,
 		processor: processor,
 		registry:  registry,
 		chain:     chain,
 	}, nil
 }
 
-func (e *Engine) Use(middleware Middleware) {
+func (e *Engine) Use(middleware ...Middleware) {
 	if e.chain == nil {
 		return
 	}
-	e.chain.Use(middleware)
+	e.chain.Use(middleware...)
 }
 
 func (e *Engine) Register(className string, worker Worker) {
+	if className == "" {
+		return
+	}
 	e.registry.register(className, worker)
 }
 
 func (e *Engine) RegisterMany(workers map[string]Worker) {
 	for name, worker := range workers {
-		e.registry.register(name, worker)
+		if name != "" {
+			e.registry.register(name, worker)
+		}
 	}
 }
 
@@ -92,9 +98,7 @@ func (e *Engine) Stop() {
 	e.processor.Stop()
 }
 
-func (e *Engine) SetMetricsHandler(h MetricsHandler) {
-	if e.processor == nil {
-		return
-	}
-	e.processor.SetMetricsHandler(h)
+// Stats returns queue statistics (processed, retry, dead, per-queue sizes).
+func (e *Engine) Stats() (*Stats, error) {
+	return queue.GetStats(e.broker)
 }

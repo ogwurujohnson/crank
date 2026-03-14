@@ -4,13 +4,10 @@ import (
 	"context"
 	"testing"
 
-	qt "github.com/frankban/quicktest"
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
 func TestInMemoryMetrics_CountsEvents(t *testing.T) {
-	c := qt.New(t)
-
 	metrics := &InMemoryMetrics{}
 
 	metrics.HandleJobEvent(context.Background(), JobEvent{
@@ -30,6 +27,10 @@ func TestInMemoryMetrics_CountsEvents(t *testing.T) {
 		Job:  payload.NewJob("W", "default"),
 	})
 
-	c.Assert(metrics.ProcessedTotal(), qt.Equals, int64(1))
-	c.Assert(metrics.FailedTotal(), qt.Equals, int64(2))
+	if got := metrics.ProcessedTotal(); got != 1 {
+		t.Errorf("ProcessedTotal() = %d, want 1", got)
+	}
+	if got := metrics.FailedTotal(); got != 2 {
+		t.Errorf("FailedTotal() = %d, want 2", got)
+	}
 }
