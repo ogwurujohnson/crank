@@ -1,4 +1,10 @@
-# Crank Go SDK
+# Crank
+
+<p>
+  <a href="https://github.com/ogwurujohnson/crank/releases"><img src="https://img.shields.io/github/release/ogwurujohnson/crank.svg" alt="Latest Release"></a>
+  <a href="https://pkg.go.dev/github.com/ogwurujohnson/crank?tab=doc"><img src="https://godoc.org/github.com/golang/gddo?status.svg" alt="Go Docs"></a>
+  <a href="https://github.com/ogwurujohnson/crank/actions/workflows/ci.yml"><img src="https://github.com/ogwurujohnson/crank/workflows/ci/badge.svg" alt="Build Status"></a>
+</p>
 
 Crank is a background job processing SDK for Go. It lets your applications enqueue jobs to named queues, run worker processes that execute those jobs concurrently, and observe execution via middleware, validation, and metrics hooks. You use a single package: `github.com/ogwurujohnson/crank`.
 
