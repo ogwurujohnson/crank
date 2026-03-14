@@ -8,7 +8,7 @@
 
 Crank is a background job processing SDK for Go. It lets your applications enqueue jobs to named queues, run worker processes that execute those jobs concurrently, and observe execution via middleware, validation, and metrics hooks. You use a single package: `github.com/ogwurujohnson/crank`.
 
-Broker backends are pluggable: **Redis** is supported today; **NATS** and **RabbitMQ** are reserved for future implementations. You choose the broker via configuration (`broker: redis` in YAML) or by passing a URL to `New()` (e.g. `redis://localhost:6379/0`). The SDK is inspired by systems like Sidekiq/Resque but is designed to feel idiomatic in Go.
+Broker backends are pluggable: **Redis** is supported today; **NATS** and **RabbitMQ** are reserved for future implementations. You choose the broker via configuration (`broker: redis` in YAML) or by passing a URL to `New()` (e.g. `redis://localhost:6379/0`). The SDK is inspired by systems like [Sidekiq](https://github.com/sidekiq/sidekiq) but is designed to feel idiomatic in Go.
 
 ---
 
