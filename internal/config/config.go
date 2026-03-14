@@ -20,16 +20,16 @@ type Logger interface {
 // Broker selection is via Broker (e.g. "redis", "nats", "rabbitmq"); the matching
 // section (Redis, NATS, etc.) must be non-empty and provide URL and options.
 type Config struct {
-	Broker             string        `yaml:"broker"`               // "redis", "nats", "rabbitmq". Default "redis".
-	BrokerURL          string        `yaml:"broker_url"`          // optional fallback URL when backend's url is empty
-	Concurrency        int           `yaml:"concurrency"`
-	Queues             []QueueConfig `yaml:"queues"`
-	Timeout            int           `yaml:"timeout"`
-	Verbose            bool          `yaml:"verbose"`
-	Redis              RedisConfig   `yaml:"redis"`               // required when broker is "redis"
-	NATS               NATSConfig   `yaml:"nats"`                // required when broker is "nats"
-	Logger             Logger        `yaml:"-"`
-	RetryPollInterval  time.Duration `yaml:"-"`                   // optional; 0 means default 5s (used by tests)
+	Broker            string        `yaml:"broker"`     // "redis", "nats", "rabbitmq". Default "redis".
+	BrokerURL         string        `yaml:"broker_url"` // optional fallback URL when backend's url is empty
+	Concurrency       int           `yaml:"concurrency"`
+	Queues            []QueueConfig `yaml:"queues"`
+	Timeout           int           `yaml:"timeout"`
+	Verbose           bool          `yaml:"verbose"`
+	Redis             RedisConfig   `yaml:"redis"` // required when broker is "redis"
+	NATS              NATSConfig    `yaml:"nats"`  // required when broker is "nats"
+	Logger            Logger        `yaml:"-"`
+	RetryPollInterval time.Duration `yaml:"-"` // optional; 0 means default 5s (used by tests)
 }
 
 // NATSConfig holds NATS connection options. Used when broker is "nats".

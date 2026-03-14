@@ -11,16 +11,16 @@ import (
 // Queues are map[string][]*payload.Job (FIFO per queue). Retry and dead jobs are
 // kept in slices so tests can inspect them.
 type InMemoryBroker struct {
-	mu       sync.Mutex
-	queues   map[string][]*payload.Job
-	retry    []retryEntry
-	dead     []*payload.Job
+	mu        sync.Mutex
+	queues    map[string][]*payload.Job
+	retry     []retryEntry
+	dead      []*payload.Job
 	processed int64
-	done     chan struct{}
+	done      chan struct{}
 }
 
 type retryEntry struct {
-	Job    *payload.Job
+	Job     *payload.Job
 	RetryAt time.Time
 }
 
