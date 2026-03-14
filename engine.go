@@ -45,6 +45,7 @@ func NewEngine(cfg *Config, broker Broker) (*Engine, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = queue.NopLogger()
 	}
+	
 	registry := &engineRegistry{workers: make(map[string]queue.Worker)}
 	breaker := queue.NewCircuitBreaker(queue.BreakerConfig{})
 	chain := queue.NewChain(
