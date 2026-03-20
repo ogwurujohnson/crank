@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -46,8 +47,10 @@ func (reportWorker) Perform(ctx context.Context, args ...interface{}) error {
 func main() {
 	var configPath string
 	var useConfig bool
+	var uiAddr string
 	flag.StringVar(&configPath, "C", "config/crank.yml", "Path to configuration file (used if -config is set)")
 	flag.BoolVar(&useConfig, "config", false, "Use YAML config file instead of New(brokerURL, opts...)")
+	flag.StringVar(&uiAddr, "ui", "", "If set (e.g. :9090), serve the Crank dashboard on this address")
 	flag.Parse()
 
 	var engine *crank.Engine
@@ -84,6 +87,33 @@ func main() {
 		log.Fatalf("Failed to start engine: %v", err)
 	}
 
+	rootCtx, stopRoot := context.WithCancel(context.Background())
+	defer stopRoot()
+
+	if uiAddr != "" {
+		uiSrv := &http.Server{
+			Addr:              uiAddr,
+			Handler:           engine.DashboardHandler(crank.DashboardOptions{Version: "EXAMPLE"}),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			host := uiAddr
+			if len(host) > 0 && host[0] == ':' {
+				host = "127.0.0.1" + host
+			}
+			log.Printf("Crank dashboard: http://%s/", host)
+			if err := uiSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Printf("dashboard server: %v", err)
+			}
+		}()
+		go func() {
+			<-rootCtx.Done()
+			shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = uiSrv.Shutdown(shCtx)
+		}()
+	}
+
 	log.Println("Crank example started. Press Ctrl+C to stop.")
 
 	sigChan := make(chan os.Signal, 1)
@@ -91,6 +121,7 @@ func main() {
 	<-sigChan
 
 	log.Println("Shutting down...")
+	stopRoot()
 	engine.Stop()
 	log.Println("Shutdown complete")
 }

@@ -33,8 +33,14 @@ func (m *mockBroker) RemoveFromRetry(*payload.Job) error         { return nil }
 func (m *mockBroker) AddToDead(*payload.Job) error               { return nil }
 func (m *mockBroker) GetDeadJobs(int64) ([]*payload.Job, error)  { return nil, nil }
 func (m *mockBroker) GetQueueSize(string) (int64, error)         { return 0, nil }
-func (m *mockBroker) DeleteKey(string) error                     { return nil }
-func (m *mockBroker) Close() error                               { return nil }
+func (m *mockBroker) PeekQueue(string, int64) ([]*payload.Job, error) {
+	return nil, nil
+}
+func (m *mockBroker) ListRetryScheduled(int64) ([]broker.RetrySchedule, error) {
+	return nil, nil
+}
+func (m *mockBroker) DeleteKey(string) error { return nil }
+func (m *mockBroker) Close() error           { return nil }
 
 var _ broker.Broker = (*mockBroker)(nil)
 

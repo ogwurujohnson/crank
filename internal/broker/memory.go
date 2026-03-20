@@ -2,6 +2,7 @@ package broker
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -160,6 +161,59 @@ func (m *InMemoryBroker) GetQueueSize(queue string) (int64, error) {
 // DeleteKey is a no-op for in-memory; provided for interface compatibility.
 func (m *InMemoryBroker) DeleteKey(key string) error {
 	return nil
+}
+
+// PeekQueue returns up to limit jobs from the front of the FIFO without dequeuing.
+func (m *InMemoryBroker) PeekQueue(queue string, limit int64) ([]*payload.Job, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	q := m.queues[queue]
+	if len(q) == 0 {
+		return nil, nil
+	}
+	n := len(q)
+	take := int(limit)
+	if take > n {
+		take = n
+	}
+	// Dequeue pops index 0; peek must return the same head order as Redis (next-to-run first).
+	slice := q[:take]
+	out := make([]*payload.Job, len(slice))
+	copy(out, slice)
+	return out, nil
+}
+
+// ListRetryScheduled returns retry entries sorted by RetryAt ascending.
+func (m *InMemoryBroker) ListRetryScheduled(limit int64) ([]RetrySchedule, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	m.mu.Lock()
+	entries := append([]retryEntry(nil), m.retry...)
+	m.mu.Unlock()
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].RetryAt.Before(entries[j].RetryAt)
+	})
+	if int64(len(entries)) > limit {
+		entries = entries[:limit]
+	}
+	out := make([]RetrySchedule, 0, len(entries))
+	for _, e := range entries {
+		if e.Job == nil {
+			continue
+		}
+		out = append(out, RetrySchedule{Job: e.Job, RetryAt: e.RetryAt})
+	}
+	return out, nil
 }
 
 // GetStats returns processed count, retry count, dead count, and per-queue sizes.

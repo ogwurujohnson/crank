@@ -10,6 +10,8 @@ import (
 	"github.com/ogwurujohnson/crank/internal/queue"
 )
 
+// TODO: understand this entire file.
+
 // New creates an Engine and Client connected to the broker at brokerURL.
 // Options configure concurrency, timeouts, queues, and logging.
 // The returned Client is the primary way to enqueue jobs; you may call SetGlobalClient(client) for global Enqueue/EnqueueWithOptions.
@@ -51,6 +53,7 @@ func (t *TestBroker) DeadJobs() []*Job {
 	return t.b.DeadJobs()
 }
 
+// TODO: maybe move NewTestEngine somewhere else
 // NewTestEngine creates an Engine and Client backed by an in-memory broker for
 // database-free testing. The third return value allows tests to inspect retry and dead
 // jobs. No Redis or other broker is required.

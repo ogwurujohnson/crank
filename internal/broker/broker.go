@@ -6,6 +6,12 @@ import (
 	"github.com/ogwurujohnson/crank/internal/payload"
 )
 
+// RetrySchedule is a job waiting in the retry sorted set with its scheduled run time.
+type RetrySchedule struct {
+	Job     *payload.Job `json:"job"`
+	RetryAt time.Time    `json:"retry_at"`
+}
+
 // Broker is the internal backend-agnostic interface for job queues.
 // Implementations (Redis, NATS, RabbitMQ, etc.) live in this package and are
 // selected by Open(url, opts) based on the URL scheme. Callers outside this
@@ -21,6 +27,12 @@ type Broker interface {
 	GetQueueSize(queue string) (int64, error)
 	DeleteKey(key string) error
 	GetStats() (map[string]interface{}, error)
+	// PeekQueue returns up to limit jobs from the named queue without removing them
+	// (oldest / next-to-dequeue first). Limit is clamped by each implementation.
+	PeekQueue(queue string, limit int64) ([]*payload.Job, error)
+	// ListRetryScheduled returns jobs in the retry set with their scheduled times,
+	// ordered soonest first.
+	ListRetryScheduled(limit int64) ([]RetrySchedule, error)
 	Close() error
 }
 

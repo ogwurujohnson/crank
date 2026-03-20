@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -208,6 +209,69 @@ func (r *RedisBroker) GetQueueSize(queue string) (int64, error) {
 
 func (r *RedisBroker) DeleteKey(key string) error {
 	return r.client.Del(r.ctx, key).Err()
+}
+
+func clampPeekLimit(limit int64) int64 {
+	if limit <= 0 {
+		return 100
+	}
+	if limit > 1000 {
+		return 1000
+	}
+	return limit
+}
+
+// PeekQueue returns jobs waiting in the list without dequeuing (next-to-run first).
+func (r *RedisBroker) PeekQueue(queue string, limit int64) ([]*payload.Job, error) {
+	limit = clampPeekLimit(limit)
+	key := fmt.Sprintf("queue:%s", queue)
+	// LPUSH + BRPOP: tail (right) is the head of the FIFO for workers.
+	vals, err := r.client.LRange(r.ctx, key, -int64(limit), -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to peek queue: %w", err)
+	}
+	// LRange returns low-index-first; BRPOP consumes from the right, so reverse
+	// to present next-to-dequeue first.
+	for i, j := 0, len(vals)-1; i < j; i, j = i+1, j-1 {
+		vals[i], vals[j] = vals[j], vals[i]
+	}
+	jobs := make([]*payload.Job, 0, len(vals))
+	for _, data := range vals {
+		job, err := payload.FromJSON([]byte(data))
+		if err != nil {
+			continue
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
+}
+
+// ListRetryScheduled lists retry entries ordered by score (soonest first).
+func (r *RedisBroker) ListRetryScheduled(limit int64) ([]RetrySchedule, error) {
+	limit = clampPeekLimit(limit)
+	n := int64(limit - 1)
+	if n < 0 {
+		n = 0
+	}
+	zs, err := r.client.ZRangeWithScores(r.ctx, "retry", 0, n).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list retry jobs: %w", err)
+	}
+	out := make([]RetrySchedule, 0, len(zs))
+	for _, z := range zs {
+		member, ok := z.Member.(string)
+		if !ok {
+			continue
+		}
+		job, err := payload.FromJSON([]byte(member))
+		if err != nil {
+			continue
+		}
+		sec, frac := math.Modf(z.Score)
+		retryAt := time.Unix(int64(sec), int64(frac*1e9))
+		out = append(out, RetrySchedule{Job: job, RetryAt: retryAt})
+	}
+	return out, nil
 }
 
 func (r *RedisBroker) GetStats() (map[string]interface{}, error) {

@@ -153,3 +153,51 @@ func TestRedisBroker_GetStats(t *testing.T) {
 		t.Errorf("queues[default] = %d, want 1", qs["default"])
 	}
 }
+
+func TestRedisBroker_PeekQueue_ListRetryScheduled(t *testing.T) {
+	s := miniredis.RunT(t)
+	r, err := NewRedisBroker(fmt.Sprintf("redis://%s/0", s.Addr()), time.Second)
+	if err != nil {
+		t.Fatalf("NewRedisBroker: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+
+	j1 := payload.NewJob("email_sender", "default", "a")
+	j2 := payload.NewJob("image_processor", "default", "b")
+	if err := r.Enqueue("default", j1); err != nil {
+		t.Fatalf("Enqueue j1: %v", err)
+	}
+	if err := r.Enqueue("default", j2); err != nil {
+		t.Fatalf("Enqueue j2: %v", err)
+	}
+
+	peek, err := r.PeekQueue("default", 10)
+	if err != nil {
+		t.Fatalf("PeekQueue: %v", err)
+	}
+	if len(peek) != 2 {
+		t.Fatalf("PeekQueue len = %d, want 2", len(peek))
+	}
+	if peek[0].JID != j1.JID || peek[1].JID != j2.JID {
+		t.Errorf("PeekQueue order = [%s, %s], want j1 then j2", peek[0].JID, peek[1].JID)
+	}
+
+	at := time.Now().Add(2 * time.Minute)
+	jr := payload.NewJob("retry_w", "default", 1)
+	if err := r.AddToRetry(jr, at); err != nil {
+		t.Fatalf("AddToRetry: %v", err)
+	}
+	sched, err := r.ListRetryScheduled(10)
+	if err != nil {
+		t.Fatalf("ListRetryScheduled: %v", err)
+	}
+	if len(sched) != 1 {
+		t.Fatalf("ListRetryScheduled len = %d, want 1", len(sched))
+	}
+	if sched[0].Job.JID != jr.JID {
+		t.Errorf("retry job JID = %q, want %q", sched[0].Job.JID, jr.JID)
+	}
+	if sched[0].RetryAt.Unix() != at.Unix() {
+		t.Errorf("RetryAt unix = %d, want %d", sched[0].RetryAt.Unix(), at.Unix())
+	}
+}
