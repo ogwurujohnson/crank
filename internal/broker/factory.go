@@ -48,7 +48,7 @@ func inferKindFromURL(rawURL string) string {
 	case strings.HasPrefix(strings.ToLower(rawURL), "amqp://"), strings.HasPrefix(strings.ToLower(rawURL), "amqps://"):
 		return "rabbitmq"
 	default:
-		return "redis"
+		return ""
 	}
 }
 

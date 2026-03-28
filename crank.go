@@ -14,24 +14,24 @@ import (
 // Options configure concurrency, timeouts, queues, and logging.
 // The returned Client is the primary way to enqueue jobs; you may call SetGlobalClient(client) for global Enqueue/EnqueueWithOptions.
 func New(brokerURL string, opts ...Option) (*Engine, *Client, error) {
-	o := defaultOptions()
+	defaultOpts := defaultOptions()
 	for _, opt := range opts {
-		opt(&o)
+		opt(&defaultOpts)
 	}
 
-	cfg := buildConfig(o, brokerURL)
-	b, err := newBroker(brokerURL, o)
+	cfg := buildConfig(defaultOpts, brokerURL)
+	store, err := newBroker(brokerURL, defaultOpts)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	eng, err := newEngine(cfg, b)
+	eng, err := newEngine(cfg, store)
 	if err != nil {
-		_ = b.Close()
+		_ = store.Close()
 		return nil, nil, err
 	}
 
-	cl := client.New(b)
+	cl := client.New(store)
 	return eng, cl, nil
 }
 
@@ -70,43 +70,46 @@ func NewTestEngine(opts ...Option) (*Engine, *Client, *TestBroker, error) {
 	return eng, cl, &TestBroker{b: b}, nil
 }
 
-func buildConfig(o options, brokerURL string) *config.Config {
-	timeoutSec := int(o.timeout.Seconds())
+func buildConfig(opts options, brokerURL string) *config.Config {
+	timeoutSec := int(opts.timeout.Seconds())
 	if timeoutSec <= 0 {
 		timeoutSec = 8
 	}
-	concurrency := o.concurrency
+	concurrency := opts.concurrency
 	if concurrency <= 0 {
 		concurrency = 10
 	}
-	qc := make([]config.QueueConfig, len(o.queues))
-	for i, q := range o.queues {
-		qc[i] = config.QueueConfig{Name: q.Name, Weight: q.Weight}
-		if qc[i].Weight <= 0 {
-			qc[i].Weight = 1
+	qConfig := make([]config.QueueConfig, len(opts.queues))
+	for i, q := range opts.queues {
+		qConfig[i] = config.QueueConfig{Name: q.Name, Weight: q.Weight}
+		if qConfig[i].Weight <= 0 {
+			qConfig[i].Weight = 1
 		}
 	}
-	if len(qc) == 0 {
-		qc = []config.QueueConfig{{Name: "default", Weight: 1}}
+	if len(qConfig) == 0 {
+		qConfig = []config.QueueConfig{{Name: "default", Weight: 1}}
 	}
 	if concurrency > 10000 {
 		concurrency = 10000
 	}
-	redisTimeoutSec := int(o.redisTimeout.Seconds())
+
+	redisTimeoutSec := int(opts.redisTimeout.Seconds())
 	if redisTimeoutSec <= 0 {
 		redisTimeoutSec = 5
 	}
+
 	return &config.Config{
 		Concurrency:       concurrency,
 		Timeout:           timeoutSec,
-		Queues:            qc,
-		Logger:            o.logger,
-		RetryPollInterval: o.retryPollInterval,
+		Queues:            qConfig,
+		Logger:            opts.logger,
+		RetryPollInterval: opts.retryPollInterval,
+		// TODO: this should be generic populated only based on the brokerType of choice
 		Redis: config.RedisConfig{
 			URL:                   brokerURL,
 			NetworkTimeout:        redisTimeoutSec,
-			UseTLS:                o.useTLS,
-			TLSInsecureSkipVerify: o.tlsInsecureSkip,
+			UseTLS:                opts.useTLS,
+			TLSInsecureSkipVerify: opts.tlsInsecureSkip,
 		},
 	}
 }
@@ -120,14 +123,8 @@ func newBroker(brokerURL string, o options) (broker.Broker, error) {
 }
 
 // brokerURLAndOptsFromConfig returns the broker URL and ConnOptions for the configured broker kind.
-func brokerURLAndOptsFromConfig(cfg *config.Config) (url string, opts broker.ConnOptions) {
+func brokerURLAndOptsFromConfig(cfg *config.Config) (string, broker.ConnOptions) {
 	switch cfg.Broker {
-	case "redis":
-		return cfg.Redis.URL, broker.ConnOptions{
-			Timeout:               cfg.Redis.GetNetworkTimeout(),
-			UseTLS:                cfg.Redis.UseTLS,
-			TLSInsecureSkipVerify: cfg.Redis.TLSInsecureSkipVerify,
-		}
 	case "nats":
 		return cfg.NATS.URL, broker.ConnOptions{
 			Timeout: cfg.NATS.GetTimeout(),
@@ -208,6 +205,7 @@ type Chain = queue.Chain
 var (
 	LoggingMiddleware  = queue.LoggingMiddleware
 	RecoveryMiddleware = queue.RecoveryMiddleware
+	ErrCircuitOpen     = queue.ErrCircuitOpen
 )
 
 // Stats holds queue statistics (processed, retry, dead, queues).
@@ -228,6 +226,8 @@ const (
 	EventJobFailed         = queue.EventJobFailed
 	EventJobRetryScheduled = queue.EventJobRetryScheduled
 	EventJobMovedToDead    = queue.EventJobMovedToDead
+	MaxRetryCount          = payload.MaxRetryCount
+	MaxBackoffShift        = payload.MaxBackoffShift
 )
 
 // Redactor redacts job args for logging.

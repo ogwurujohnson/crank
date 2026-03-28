@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -17,20 +18,23 @@ type jobMsg struct {
 }
 
 type Processor struct {
-	cfg      *config.Config
-	broker   broker.Broker
-	registry WorkerRegistry
-	log      Logger
-	queues   []string
-	jobCh    chan jobMsg
-	wg       sync.WaitGroup
-	ctx      context.Context
-	cancel   context.CancelFunc
-	chain    *Chain
-	handler  Handler
-	breaker  *CircuitBreaker
-	metrics  MetricsHandler
-	events   chan JobEvent
+	cfg       *config.Config
+	broker    broker.Broker
+	registry  WorkerRegistry
+	log       Logger
+	queues    []string
+	queueSet  map[string]bool
+	jobCh     chan jobMsg
+	wg        sync.WaitGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
+	chain     *Chain
+	handler   Handler
+	breaker   *CircuitBreaker
+	metrics   MetricsHandler
+	events    chan JobEvent
+	started   bool
+	mu        sync.Mutex
 }
 
 func NewProcessor(cfg *config.Config, b broker.Broker, registry WorkerRegistry, chain *Chain) (*Processor, error) {
@@ -49,6 +53,11 @@ func NewProcessor(cfg *config.Config, b broker.Broker, registry WorkerRegistry, 
 		queues = []string{"default"}
 	}
 
+	queueSet := make(map[string]bool)
+	for _, q := range queues {
+		queueSet[q] = true
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	log := cfg.Logger
 	if log == nil {
@@ -65,14 +74,17 @@ func NewProcessor(cfg *config.Config, b broker.Broker, registry WorkerRegistry, 
 		registry: registry,
 		log:      log,
 		queues:   queues,
+		queueSet: queueSet,
 		jobCh:    make(chan jobMsg),
 		ctx:      ctx,
 		cancel:   cancel,
 		chain:    chain,
 	}
 
-	// Initialize the execution handler once
+	// Initialize handler so processJob works even without Start() (e.g., in tests).
+	// Start() re-wraps to include any middleware added via Use() after construction.
 	p.handler = p.chain.Wrap(p.execute)
+
 	return p, nil
 }
 
@@ -85,26 +97,37 @@ func (p *Processor) execute(ctx context.Context, job *payload.Job) error {
 	}
 
 	var (
-		worker Worker
-		err    error
+		worker   Worker
+		localErr error
 	)
 
 	// Fallback chain: local registry -> global registry
 	if p.registry != nil {
-		worker, err = p.registry.GetWorker(job.Class)
+		worker, localErr = p.registry.GetWorker(job.Class)
 	}
 	if worker == nil {
-		worker, err = GetWorker(job.Class)
-	}
-
-	if err != nil {
-		return fmt.Errorf("worker not found for %s: %w", job.Class, err)
+		var globalErr error
+		worker, globalErr = GetWorker(job.Class)
+		if worker == nil {
+			if localErr != nil {
+				return fmt.Errorf("worker not found for %s: %w (global: %v)", job.Class, localErr, globalErr)
+			}
+			return fmt.Errorf("worker not found for %s: %w", job.Class, globalErr)
+		}
 	}
 
 	return worker.Perform(ctx, job.Args...)
 }
 
 func (p *Processor) Start() error {
+	p.mu.Lock()
+	if p.started {
+		p.mu.Unlock()
+		return fmt.Errorf("processor already started")
+	}
+	p.started = true
+	p.handler = p.chain.Wrap(p.execute)
+	p.mu.Unlock()
 	p.log.Info("engine started", "concurrency", p.cfg.Concurrency, "queues", p.queues)
 
 	// Start Fetcher
@@ -118,9 +141,12 @@ func (p *Processor) Start() error {
 	}
 
 	// Start Maintenance Loops
-	p.wg.Add(2)
+	p.wg.Add(1)
 	go p.retryLoop()
-	go p.metricsLoop()
+	if p.events != nil {
+		p.wg.Add(1)
+		go p.metricsLoop()
+	}
 
 	return nil
 }
@@ -170,7 +196,9 @@ func (p *Processor) fetcher() {
 			case p.jobCh <- jobMsg{job: job, queue: q}:
 			case <-p.ctx.Done():
 				job.State = payload.JobStatePending
-				_ = p.broker.Enqueue(q, job)
+				if err := p.broker.Enqueue(q, job); err != nil {
+					p.log.Error("failed to re-enqueue job on shutdown", "jid", job.JID, "queue", q, "err", err)
+				}
 				return
 			}
 		}
@@ -188,7 +216,7 @@ func (p *Processor) processJob(job *payload.Job, queue string) {
 	start := time.Now()
 	p.emitEvent(JobEvent{Type: EventJobStarted, Job: job, Queue: queue})
 
-	ctx, cancel := context.WithTimeout(context.Background(), p.cfg.GetTimeout())
+	ctx, cancel := context.WithTimeout(p.ctx, p.cfg.GetTimeout())
 	defer cancel()
 
 	job.State = payload.JobStateActive
@@ -207,21 +235,34 @@ func (p *Processor) processJob(job *payload.Job, queue string) {
 	}
 }
 
-func (p *Processor) handleFailure(job *payload.Job, err error) {
+func (p *Processor) handleFailure(job *payload.Job, jobErr error) {
+	// Circuit-open: re-enqueue without burning a retry attempt
+	if errors.Is(jobErr, ErrCircuitOpen) {
+		job.State = payload.JobStatePending
+		if err := p.broker.AddToRetry(job, time.Now().Add(5*time.Second)); err != nil {
+			p.log.Warn("circuit-open re-enqueue failed", "jid", job.JID, "err", err)
+		}
+		return
+	}
+
 	job.RetryCount++
 	if job.RetryCount <= job.Retry {
-		// Exponential backoff: 2^count + small constant
-		delay := time.Duration(1<<uint(job.RetryCount)) * time.Second
+		// Exponential backoff: 2^count, capped to prevent overflow
+		shift := job.RetryCount
+		if shift > payload.MaxBackoffShift {
+			shift = payload.MaxBackoffShift
+		}
+		delay := time.Duration(1<<uint(shift)) * time.Second
 		retryAt := time.Now().Add(delay)
 
-		p.emitEvent(JobEvent{Type: EventJobRetryScheduled, Job: job, Queue: job.Queue, Err: err})
+		p.emitEvent(JobEvent{Type: EventJobRetryScheduled, Job: job, Queue: job.Queue, Err: jobErr})
 		if err := p.broker.AddToRetry(job, retryAt); err != nil {
 			p.log.Warn("retry schedule failed", "jid", job.JID, "err", err)
 		}
 	} else {
 		job.State = payload.JobStateDead
 		p.log.Warn("job exceeded max retries, moving to dead queue", "jid", job.JID, "state", job.State)
-		p.emitEvent(JobEvent{Type: EventJobMovedToDead, Job: job, Queue: job.Queue, Err: err})
+		p.emitEvent(JobEvent{Type: EventJobMovedToDead, Job: job, Queue: job.Queue, Err: jobErr})
 		if err := p.broker.AddToDead(job); err != nil {
 			p.log.Warn("move to dead failed", "jid", job.JID, "err", err)
 		}
@@ -248,11 +289,19 @@ func (p *Processor) retryLoop() {
 				continue
 			}
 			for _, j := range jobs {
-				// Re-enqueue logic
-				if err := p.broker.RemoveFromRetry(j); err == nil {
-					j.State = payload.JobStatePending
-					if err := p.broker.Enqueue(j.Queue, j); err != nil {
-						p.broker.AddToRetry(j, time.Now().Add(time.Minute))
+				if !p.queueSet[j.Queue] {
+					p.log.Warn("retry job has unknown queue, skipping", "jid", j.JID, "queue", j.Queue)
+					continue
+				}
+				if err := p.broker.RemoveFromRetry(j); err != nil {
+					p.log.Warn("remove from retry failed", "jid", j.JID, "err", err)
+					continue
+				}
+				j.State = payload.JobStatePending
+				if err := p.broker.Enqueue(j.Queue, j); err != nil {
+					p.log.Warn("re-enqueue retry job failed, re-adding to retry", "jid", j.JID, "err", err)
+					if addErr := p.broker.AddToRetry(j, time.Now().Add(time.Minute)); addErr != nil {
+						p.log.Error("failed to re-add job to retry set, job may be lost", "jid", j.JID, "err", addErr)
 					}
 				}
 			}
@@ -262,9 +311,6 @@ func (p *Processor) retryLoop() {
 
 func (p *Processor) metricsLoop() {
 	defer p.wg.Done()
-	if p.events == nil {
-		return
-	}
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -274,7 +320,7 @@ func (p *Processor) metricsLoop() {
 				return
 			}
 			if p.metrics != nil {
-				p.metrics.HandleJobEvent(context.Background(), ev)
+				p.metrics.HandleJobEvent(p.ctx, ev)
 			}
 		}
 	}
@@ -292,7 +338,12 @@ func (p *Processor) emitEvent(ev JobEvent) {
 	}
 }
 
-func (p *Processor) SetMetricsHandler(h MetricsHandler) {
+func (p *Processor) SetMetricsHandler(h MetricsHandler) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.started {
+		return fmt.Errorf("SetMetricsHandler must be called before Start")
+	}
 	p.metrics = h
 	if h != nil && p.events == nil {
 		size := p.cfg.Concurrency * 10
@@ -301,4 +352,5 @@ func (p *Processor) SetMetricsHandler(h MetricsHandler) {
 		}
 		p.events = make(chan JobEvent, size)
 	}
+	return nil
 }

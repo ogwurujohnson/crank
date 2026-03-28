@@ -112,7 +112,22 @@ func Load(path string) (*Config, error) {
 	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return nil, fmt.Errorf("failed to read config file: path must not be a traversal (..)")
 	}
-	data, err := os.ReadFile(path)
+	// Resolve symlinks to prevent symlink-based traversal
+	resolved, err := filepath.EvalSymlinks(cleaned)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve config path: %w", err)
+	}
+	// Re-check the resolved path for traversal
+	if !filepath.IsAbs(cleaned) {
+		wd, wdErr := os.Getwd()
+		if wdErr == nil {
+			rel, relErr := filepath.Rel(wd, resolved)
+			if relErr == nil && (rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+				return nil, fmt.Errorf("failed to read config file: resolved path escapes working directory")
+			}
+		}
+	}
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
