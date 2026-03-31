@@ -118,6 +118,11 @@ func (e *Engine) Stop() {
 	})
 }
 
+// SetMetricsHandler sets the metrics handler for the engine. Must be called before Start.
+func (e *Engine) SetMetricsHandler(h MetricsHandler) error {
+	return e.processor.SetMetricsHandler(h)
+}
+
 // Stats returns queue statistics (processed, retry, dead, per-queue sizes).
 func (e *Engine) Stats() (*Stats, error) {
 	return queue.GetStats(e.broker)

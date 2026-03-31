@@ -33,7 +33,7 @@ type Job struct {
 	CreatedAt  float64                `json:"created_at"`
 	EnqueuedAt float64                `json:"enqueued_at"`
 	Backtrace  bool                   `json:"backtrace"`
-	State      JobState               `json:"state,omitempty"`
+	State      JobState               `json:"state"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
